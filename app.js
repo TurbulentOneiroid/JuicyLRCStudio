@@ -2019,7 +2019,10 @@ tl.addEventListener('mousedown', e => {
 		else if (!drag.moved && drag.hit) {          // nothing hanging: pick this mark (to set it again in edit mode)
 			if (edit) edit.free = false;
 			setSel({li: drag.hit.li, ti: drag.hit.ti, end: drag.hit.end});
-		} else if (!drag.moved) seek(view.start + drag.x0 / W * view.span);
+		} else if (!drag.moved) {                   // empty spot: just the playhead, Space then plays on normally
+			seek(view.start + drag.x0 / W * view.span);
+			replayT = null;
+		}
 		drag = null;
 	};
 	window.addEventListener('mousemove', move);
