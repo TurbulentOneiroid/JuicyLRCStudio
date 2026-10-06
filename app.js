@@ -1403,15 +1403,16 @@ let LANE_Y = 137;               // timeline: words and waveform above, line boxe
 const LIFT_DY = -44;             // a lifted (overlapping) line box: this far above the line box row, over the words
 
 // main lines that start before the line before them ends: the 'overlap' rule of LRC.check, worked out live while dragging
+// Of two such lines the later one is lifted, unless the earlier one was just fanned out and ran into it: then that one.
 function overlapLines() {
 	const out = new Set();
-	let pe = null;
+	let pe = null, pli = null;
 	doc.lines.forEach((ln, li) => {
 		if (ln.brk || !ln.tokens.length || LRC.isBg(ln)) return;
 		const t = ln.tokens[0].t;
-		if (t != null && pe != null && t < pe - 0.005) out.add(li);
+		if (t != null && pe != null && t < pe - 0.005) out.add(liftFirst.has(doc.lines[pli]) ? pli : li);
 		const last = ln.tokens[ln.tokens.length - 1];
-		if (last.end != null) pe = last.end;
+		if (last.end != null || last.t != null) { pe = last.end != null ? last.end : last.t; pli = li; }
 	});
 	return out;
 }
@@ -2129,23 +2130,38 @@ function sameTimeGroup(li, ti) {
 	return b > a ? {g: row.slice(a, b + 1), next: row[b + 1] || null} : null;
 }
 
-// a stack fanned out: its words share the time up to the next later word (or the end of the last one), each by the
-// length of its text
+// a stack fanned out: each word gets a length by its text, the rest of the line (and its end) moves along so all
+// stays in one row. Where there is more room up to the next word, the words share it. If the line now runs into the
+// next one, it is the fanned line that gets lifted (see overlapLines), the next line stays where it is.
+const liftFirst = new WeakSet();
 function fanOut(li, ti) {
 	const s = sameTimeGroup(li, ti);
 	if (!s) return false;
-	const {g, next} = s, t0 = g[0].k.t, n = g.length, lk = g[n - 1].k;
-	let t1 = lk.end != null && lk.end > t0 + 0.005 ? lk.end : next ? next.k.t : boxEnd(g[n - 1].li, g[n - 1].ti);
-	if (t1 == null || t1 - t0 < 0.05 * n) t1 = t0 + 0.25 * n;    // no room to share: a short default per word
-	const wt = g.map(e => Math.max(1, e.k.text.trim().length));
-	const sum = wt.reduce((x, w) => x + w, 0);
+	const {g} = s, t0 = g[0].k.t, n = g.length, last = g[n - 1], lk = last.k, ln = doc.lines[last.li];
+	const rest = ln.tokens.slice(last.ti + 1).filter(k => k.t != null);
+	const wt = g.map(e => Math.max(0.2, 0.08 * e.k.text.trim().length));      // natural length in seconds
+	const need = wt.reduce((x, w) => x + w, 0);
+	let room;                                        // the time the stack has now, up to the next word / its end
+	if (rest.length) room = rest[0].t - t0;
+	else if (lk.end != null && lk.end > t0 + 0.005) room = lk.end - t0;
+	else if (s.next) room = Math.min(s.next.k.t - t0, need);                 // line end: never further than needed
+	else room = need;
+	const span = Math.max(room, need), sc = span / need;
 	pushUndo();
 	let acc = 0;
 	g.forEach((e, i) => {
-		e.k.t = LRC.q(t0 + (t1 - t0) * acc / sum);
+		e.k.t = LRC.q(t0 + acc * sc);
 		if (i < n - 1 && e.k.end != null && e.k.end <= e.k.t + 0.02) e.k.end = null;    // zero-length end: the box runs on
 		acc += wt[i];
 	});
+	const sh = span - room;                          // the rest of the line moves along, with its end marks
+	if (rest.length) {
+		if (sh > 0) for (const k of ln.tokens.slice(last.ti + 1)) {
+			if (k.t != null) k.t = LRC.q(k.t + sh);
+			if (k.end != null) k.end = LRC.q(k.end + sh);
+		}
+	} else lk.end = LRC.q(t0 + span);               // the line end sits right after the last word
+	for (const e of g) liftFirst.add(doc.lines[e.li]);
 	changed();
 	return true;
 }

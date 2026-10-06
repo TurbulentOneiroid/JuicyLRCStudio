@@ -23,7 +23,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
   an ihrer Box verschieben (überlappt eine Zeile die davor, liegt ihre Box rot leuchtend eine Ebene höher, bis wieder Platz ist),
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau.
   Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen,
-  der Knopf „⇔ auffächern“ darüber (oder Doppelklick) legt sie bis zum nächsten späteren Wort nebeneinander, auch über Zeilen hinweg (je nach Textlänge)
+  der Knopf „⇔ auffächern“ darüber (oder Doppelklick) legt sie nebeneinander (Länge nach Text, auch über Zeilen hinweg); der Rest der Zeile und ihr Ende rücken mit
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
 - Seitenleiste (Song, Prüfung, Original-Abgleich) neben den Wörtern: mit ⇆ links oder rechts
