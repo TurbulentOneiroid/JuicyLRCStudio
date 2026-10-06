@@ -301,10 +301,147 @@ const LRC = (() => {
 		return n;
 	}
 
-	// pasted lyrics -> unplaced lines; '|' splits syllables (Hel|lo)
+	// Pasted lyrics from lyric sites: section headers ([Verse 1], [Chorus], (Refrain) ...) and the
+	// "You might also like" block with other songs are dropped, [...] inside a line too, "123Embed" at the end.
+	const SECTION = /^[[(]\s*(verse|chorus|refrain|hook|bridge|intro|outro|pre-?chorus|post-?chorus|strophe|interlude|break|drop|instrumental|part|teil)\b[^\])]*[\])]\s*$/i;
+
+	function cleanLyrics(text) {
+		const out = [];
+		let junk = false;
+		for (let raw of text.split(/\r?\n/)) {
+			raw = raw.normalize('NFC').trim();
+			if (/^\[[^\]]*\]$/.test(raw) || SECTION.test(raw)) { junk = false; continue; }
+			if (/^you might also like/i.test(raw)) { junk = true; continue; }
+			if (junk) continue;
+			if (/^\d+\s+contributors?\b/i.test(raw) || /^translations?$/i.test(raw)) continue;
+			raw = raw.replace(/\[[^\]]*\]/g, ' ').replace(/\d*\s*Embed$/, '').replace(/\s+/g, ' ').trim();
+			out.push(raw);
+		}
+		return out;
+	}
+
+	// ---------------------------------------------------------------- compare with the original lyrics
+	//
+	// Every LRC line is aligned on its own against the whole original as one word stream, so repeats and loops of a
+	// remix find their place again, and a line may start or stop anywhere (remix cuts are no mistakes). Inside the
+	// matched stretch a different word is a suggestion to replace, a missing word one to insert, an extra word one
+	// to delete. Words in (...) of the original are optional (backing vocals). Case and punctuation do not count.
+
+	const norm = w => w.toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+
+	function lev(a, b) {
+		if (a === b) return 0;
+		let p = Array.from({length: b.length + 1}, (_, j) => j);
+		for (let i = 1; i <= a.length; i++) {
+			const c = [i];
+			for (let j = 1; j <= b.length; j++) c[j] = Math.min(p[j] + 1, c[j - 1] + 1, p[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+			p = c;
+		}
+		return p[b.length];
+	}
+
+	// 'same' | 'near' (a typo or a small mishearing) | 'other'
+	function likeness(a, b) {
+		if (a === b) return 'same';
+		const n = Math.max(a.length, b.length);
+		return n >= 3 && lev(a, b) <= Math.max(1, Math.floor(n / 3)) ? 'near' : 'other';
+	}
+
+	function refWords(lines) {
+		const out = [];
+		let depth = 0;
+		lines.forEach((ln, rl) => {
+			for (const raw of ln.split(/\s+/).filter(Boolean)) {
+				const open = (raw.match(/\(/g) || []).length, close = (raw.match(/\)/g) || []).length;
+				const opt = depth > 0 || open > 0;
+				depth = Math.max(0, depth + open - close);
+				const w = raw.replace(/[()]/g, '');
+				const n = norm(w);
+				if (n) out.push({w, n, opt, rl});
+			}
+			depth = 0;                                // a bracket never runs over the end of a line
+		});
+		return out;
+	}
+
+	// words of an LRC line: glued syllables are one word. {ti0, ti1, text, n}
+	function lineWords(ln) {
+		const out = [];
+		ln.tokens.forEach((k, ti) => {
+			const prev = out[out.length - 1];
+			if (k.glue && prev) { prev.ti1 = ti; prev.text += k.text; }
+			else out.push({ti0: ti, ti1: ti, text: k.text});
+		});
+		for (const w of out) w.n = norm(w.text);
+		return out.filter(w => w.n);
+	}
+
+	// -> [{li, kind: 'sub' | 'miss' | 'extra' | 'nomatch', ti0, ti1, have, want, near, ref}], ti0 of 'miss' = insert before
+	// this token (tokens.length = at the end), ref = the matched part of the original as text
+	function compareRef(doc, lines) {
+		const R = refWords(lines), m = R.length, out = [];
+		if (!m) return out;
+		let prevEnd = 0;
+		doc.lines.forEach((ln, li) => {
+			if (ln.brk || isBg(ln)) return;
+			const W = lineWords(ln), n = W.length;
+			if (!n) return;
+			// semi-global alignment: free start and end in the original
+			const D = new Float64Array((n + 1) * (m + 1)), B = new Uint8Array((n + 1) * (m + 1));
+			const at = (i, j) => i * (m + 1) + j;
+			for (let i = 1; i <= n; i++) { D[at(i, 0)] = i * 1.5; B[at(i, 0)] = 2; }
+			for (let i = 1; i <= n; i++) {
+				for (let j = 1; j <= m; j++) {
+					const lk = likeness(W[i - 1].n, R[j - 1].n);
+					const sub = D[at(i - 1, j - 1)] + (lk === 'same' ? 0 : lk === 'near' ? 0.3 : 1.4);
+					const extra = D[at(i - 1, j)] + 1.5;          // an extra word costs more than a missing one: a mishearing more often drops words
+					const miss = D[at(i, j - 1)] + (R[j - 1].opt ? 0.05 : 1);
+					let best = sub, b = 1;
+					if (extra < best) { best = extra; b = 2; }
+					if (miss < best) { best = miss; b = 3; }
+					D[at(i, j)] = best;
+					B[at(i, j)] = b;
+				}
+			}
+			let end = -1, cost = Infinity, dist = Infinity;
+			for (let j = 1; j <= m; j++) {
+				const c = D[at(n, j)], d = (j - prevEnd + m) % m;   // equal cost: the next one after the line before
+				if (c < cost - 1e-9 || (Math.abs(c - cost) < 1e-9 && d < dist)) { cost = c; end = j; dist = d; }
+			}
+			if (cost > n * 0.5 || (n < 3 && cost > 0.6)) {
+				if (n >= 3) out.push({li, kind: 'nomatch', ti0: 0, ti1: ln.tokens.length - 1});
+				return;
+			}
+			prevEnd = end;
+			const found = [];
+			let i = n, j = end;
+			while (i > 0) {
+				const b = B[at(i, j)];
+				if (b === 1) {
+					const w = W[i - 1], r = R[j - 1], lk = likeness(w.n, r.n);
+					if (lk !== 'same') found.push({li, kind: 'sub', ti0: w.ti0, ti1: w.ti1, have: w.text, want: r.w, near: lk === 'near'});
+					i--; j--;
+				} else if (b === 2) {
+					const w = W[i - 1];
+					found.push({li, kind: 'extra', ti0: w.ti0, ti1: w.ti1, have: w.text});
+					i--;
+				} else {
+					const r = R[j - 1];
+					if (!r.opt) found.push({li, kind: 'miss', ti0: i < n ? W[i].ti0 : ln.tokens.length, ti1: -1, want: r.w,
+						after: i > 0 ? W[i - 1].text : null});
+					j--;
+				}
+			}
+			const ref = R.slice(j, end).map(r => r.w).join(' ');
+			for (const f of found.reverse()) { f.ref = ref; out.push(f); }
+		});
+		return out;
+	}
+
+	// pasted lyrics -> unplaced lines; '|' splits syllables (Hel|lo); section headers and site junk are dropped
 	function fromText(text, meta) {
 		const doc = {meta: meta.filter(m => m[1]), lines: [], warnings: []};
-		for (const raw of text.split(/\r?\n/)) {
+		for (const raw of cleanLyrics(text)) {
 			const words = raw.trim().normalize('NFC').split(/\s+/).filter(Boolean);
 			if (!words.length) continue;
 			const {v, body} = stripVoice(words.join(' '));
@@ -333,5 +470,5 @@ const LRC = (() => {
 	}
 
 	return {SAME, q, fmt, decode, parse, write, check, flat, tokEnd, lineTime, spreadSame, guessEnds, suggestEnd, fromText,
-		tokensOf, lineText, stripVoice, voices, voiceGroup, isBg};
+		tokensOf, lineText, stripVoice, voices, voiceGroup, isBg, cleanLyrics, compareRef};
 })();

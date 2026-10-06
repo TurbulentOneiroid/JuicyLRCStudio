@@ -31,14 +31,18 @@ let drag = null;
 let origin = null;              // snapshot as loaded / created: Zurücksetzen goes back to it
 let edit = null;                // {li, before, free}: the one line being edited (B ... OK / Abbrechen), see startEdit
 let hoverX = null;              // mouse x over the timeline
+let blade = false;              // ✂ on: a click into the timeline cuts the line there, see cutLine
 let snip = null;                // short audition running: {t, timer}
 let replayT = null;             // last time set with the mouse or auditioned: Space replays it until normal playback
 let loop = null;                // {kind: 'line', li} | {kind: 'zone'} (loop box of the open line) | {kind: 'word', li, ti}
 let lanes = [];                 // line boxes in the timeline of the last frame: {x0, x1, y, h, li}
 let lineBad = new Map();        // li -> 'err' | 'warn', rebuilt on every change
 let sugg = new Map();           // li -> suggested end of a line whose end is missing (far from the next line)
+let audioHandle = null;         // file handle of the audio when known: Speichern unter starts in its folder
 let folder = null;              // opened folder: {name, songs: [{key, audio: [F], lrc: [F]}], lrcDir}, see openFolder
 let newTarget = null;           // {dir, name}: a new LRC made from the folder list is saved there
+let refRaw = '', refLines = null;  // original lyrics as pasted / cleaned lines (null = no comparison), see runRef
+let refDiffs = [], refAt = new Map(), refSkip = new Set();
 
 const tapComp = () => (+$('tapComp').value || 0) / 1000;
 const maxGap = () => Math.max(0, +$('maxGap').value || 0);
@@ -131,8 +135,10 @@ function changed(markDirty = true) {
 		if (i.level !== 'info' && issueAt.get(key) !== 'err') issueAt.set(key, i.level);
 		if (i.level !== 'info' && lineBad.get(i.li) !== 'err') lineBad.set(i.li, i.level);
 	}
+	runRef();
 	renderWords();
 	renderIssues();
+	renderRef();
 	renderInfo();
 	saveDraftSoon();
 }
@@ -184,6 +190,7 @@ function setDoc(d, name, handle) {
 	edit = null;
 	replayT = null;
 	loop = null;
+	refLines = null;
 	clearPicked();
 	origin = snapshot();
 	renderMeta();
@@ -194,7 +201,7 @@ function setDoc(d, name, handle) {
 }
 
 async function loadLrcFile(file, handle = null) {
-	if (dirty && !confirm('Ungespeicherte Änderungen verwerfen?')) return;
+	if (!await askSave()) return;
 	const d = LRC.parse(LRC.decode(await file.arrayBuffer()));
 	newTarget = null;
 	setDoc(d, file.name, handle);
@@ -213,7 +220,8 @@ async function openLrc() {
 	$('fileLrc').click();
 }
 
-async function loadAudio(file) {
+async function loadAudio(file, handle = null) {
+	audioHandle = handle;
 	if (audio.src) URL.revokeObjectURL(audio.src);
 	audio.src = URL.createObjectURL(file);
 	audio.defaultPlaybackRate = audio.playbackRate = rate;
@@ -266,8 +274,17 @@ async function save(as) {
 		try {
 			let h = as ? null : fileHandle;
 			if (!h && !as && newTarget && newTarget.dir) h = await newTarget.dir.getFileHandle(newTarget.name, {create: true});
-			if (!h) h = await showSaveFilePicker({suggestedName: suggestName(),
-				types: [{description: 'LRC', accept: {'text/plain': ['.lrc']}}]});
+			if (!h) {
+				const opt = {suggestedName: safeName(suggestName()), types: [{description: 'LRC', accept: {'text/plain': ['.lrc']}}]};
+				const start = fileHandle || (newTarget && newTarget.dir) || songDir() || audioHandle || (folder && folder.lrcDir);
+				if (start) opt.startIn = start; else opt.id = 'juicyLrcSave';
+				try { h = await showSaveFilePicker(opt); }
+				catch (e) {                                  // a stale handle as start folder: once more without it
+					if (e.name === 'AbortError' || !opt.startIn) throw e;
+					delete opt.startIn;
+					h = await showSaveFilePicker(opt);
+				}
+			}
 			const w = await h.createWritable();
 			await w.write(text);
 			await w.close();
@@ -280,16 +297,32 @@ async function save(as) {
 		} catch (e) {
 			if (e.name === 'AbortError') return;
 			console.warn('save via file picker failed, downloading instead', e);
+			saveErr = e.name + ': ' + e.message;
 		}
 	}
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain;charset=utf-8'}));
-	a.download = suggestName();
+	a.download = safeName(suggestName());
 	a.click();
 	setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 	fileName = a.download;
 	saved(old);
+	if (as || saveErr) hint('Gespeichert in Downloads als „' + a.download + '“. ' + (window.showSaveFilePicker ?
+		'Der Speichern-Dialog ging nicht auf (' + (saveErr || '?') + ').' : navigator.brave ?
+		'Brave sperrt den Ordner-Dialog: brave://flags → „File System Access API“ einschalten, oder Chrome / Edge nehmen.' :
+		'Einen Ordner wählen geht nur in Chrome oder Edge (Firefox: Einstellungen → Dateien → „Immer fragen, wo Dateien gespeichert werden“).'));
+	saveErr = '';
 }
+let saveErr = '';
+
+// the folder of the song open from the folder list (its LRC's, else its audio's)
+function songDir() {
+	const s = folder && folder.songs[folder.cur];
+	return s ? (s.lrc[0] && s.lrc[0].dir) || (s.audio[0] && s.audio[0].dir) || null : null;
+}
+
+// characters a file name may not contain on Windows / macOS
+const safeName = n => n.replace(/[\\/:*?"<>|]+/g, '_').replace(/^\.+/, '').trim() || 'lyrics.lrc';
 
 function saved(old) {
 	dirty = false;
@@ -548,8 +581,9 @@ function gain(v, tc) {
 }
 
 // Right click / Space while placing: play snipLen seconds (song time) from t, once, faded in and out,
-// then the playhead goes back to t.
-function audition(t) {
+// then the playhead goes back to t. hold (right button held in the timeline): plays on, past any loop, until
+// the button is let go (releaseSnip), but at least snipLen.
+function audition(t, hold = false) {
 	if (!audio.src) { hint('Erst Audio laden (♪ Audio oder ins Fenster ziehen).'); return; }
 	t = Math.max(0, Math.min(t, length()));
 	stopSnip();
@@ -562,18 +596,34 @@ function audition(t) {
 	gain(0);
 	gain(1, 0.004);
 	audio.play().catch(() => {});        // a pause right after play rejects, harmless
-	const s = snip = {t, timer: 0};
-	s.timer = setTimeout(() => {
-		gain(0, 0.008);
-		s.timer = setTimeout(() => {
-			if (snip !== s) return;
-			snip = null;
-			audio.pause();
-			gain(1);
-			seek(s.t);
-		}, 40);
-	}, snipLen() / rate * 1000);
+	const s = snip = {t, timer: 0, hold, t0: performance.now()};
+	if (!hold) s.timer = setTimeout(() => endSnip(s), snipLen() / rate * 1000);
 }
+
+// fade out, stop, playhead back to where the audition started
+function endSnip(s) {
+	if (snip !== s) return;
+	clearTimeout(s.timer);
+	gain(0, 0.008);
+	s.timer = setTimeout(() => {
+		if (snip !== s) return;
+		snip = null;
+		audio.pause();
+		gain(1);
+		seek(s.t);
+	}, 40);
+}
+
+// right button let go: a short click still plays the whole snipLen, a long hold stops now
+function releaseSnip() {
+	const s = snip;
+	if (!s || !s.hold) return;
+	s.hold = false;
+	const left = snipLen() / rate * 1000 - (performance.now() - s.t0);
+	if (left > 0) s.timer = setTimeout(() => endSnip(s), left); else endSnip(s);
+}
+window.addEventListener('mouseup', e => { if (e.button === 2) releaseSnip(); });
+window.addEventListener('blur', releaseSnip);
 
 function stopSnip() {
 	if (!snip) return;
@@ -1032,6 +1082,57 @@ function addLine(li) {
 	changed();
 }
 
+// X / ✂: the line is split before the marked word, the rest becomes a line of its own (same voice); in the
+// timeline its box becomes two
+// ✂ blade, like cutting a clip in a video editor: while it is on, a click into the timeline cuts the line box
+// there into two lines. Cut inside a word: the left line ends at the cut, the right one starts with the next word
+// (a word is never cut in half, syllables stay with their word). Cut in a pause: the pause stays the left end.
+function setBlade(on) {
+	if (on && edit) { lockedHint(); return; }
+	blade = on;
+	$('btnSplit').classList.toggle('on', on);
+	tl.style.cursor = on ? 'crosshair' : '';
+	if (on) hint('✂ Klinge an: Klick in die Zeitleiste teilt die Zeile genau dort. X, Esc oder ✂ = aus.');
+}
+
+// the line box at timeline x (and y, if it is in the line box row); main lines before background vocals
+function lineAtX(x, y) {
+	if (y != null && y >= LANE_Y - 1) {
+		const b = lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
+		if (b) return b.li;
+	}
+	const hits = lanes.filter(l => x >= l.x0 && x <= l.x1);
+	const b = hits.find(l => !LRC.isBg(doc.lines[l.li])) || hits[0];
+	return b ? b.li : lineAt(view.start + x / tl.clientWidth * view.span);   // boxes not drawn yet: by time
+}
+
+function cutLine(li, c) {
+	if (edit) { setBlade(false); lockedHint(); return; }
+	const ln = li != null && doc.lines[li];
+	if (!ln || ln.brk) { hint('✂ Hier ist keine Zeile – in eine Zeilen-Box klicken.'); return; }
+	const tk = ln.tokens;
+	let j = -1;
+	tk.forEach((k, i) => { if (k.t != null && k.t <= c) j = i; });
+	if (j < 0) { hint('✂ Vor dem ersten Wort der Zeile – da gibt es nichts zu teilen.'); return; }
+	let s = j + 1;
+	while (s < tk.length && tk[s].glue) s++;      // syllables stay with their word
+	if (s >= tk.length) { hint('✂ Im letzten Wort – rechts davon beginnt kein Wort mehr, das eine neue Zeile tragen könnte.'); return; }
+	pushUndo();
+	clearPicked();
+	const left = tk[s - 1], nx = tk[s];
+	let e = c;
+	if (nx.t != null) e = Math.min(e, nx.t);
+	if (left.t != null) e = Math.max(e, left.t + 0.05);
+	if (left.end == null || left.end > e) left.end = LRC.q(e);   // cut in a pause: the pause end stays
+	const tail = tk.splice(s);
+	tail[0].glue = false;
+	doc.lines.splice(li + 1, 0, {t: tail[0].t != null ? null : LRC.q(c), tokens: tail, brk: false, vtag: ln.vtag});
+	sel = {li: li + 1, ti: 0, end: false};
+	changed();
+	hint('✂ Zeile ' + (li + 1) + ' geteilt: „' + LRC.lineText(ln, false).replace(/\|/g, '') + '“ | „' +
+		LRC.lineText(doc.lines[li + 1], false).replace(/\|/g, '') + '“  (Strg+Z = zurück)');
+}
+
 function delLine(li) {
 	pushUndo();
 	clearPicked();
@@ -1078,8 +1179,13 @@ function renderWords() {
 		}
 		ln.tokens.forEach((k, ti) => {
 			const lv = issueAt.get(li + ':' + ti);
-			const cls = 'tok' + (k.glue ? ' glue' : '') + (k.t == null ? ' unset' : '') + (lv ? ' ' + lv : '');
-			html.push('<span class="' + cls + '" data-li="' + li + '" data-ti="' + ti + '"><span class="w">' + esc(k.text) +
+			const rd = refAt.get(li + ':' + ti), rm = refAt.get(li + ':' + ti + ':m');
+			const ra = ti === ln.tokens.length - 1 && refAt.get(li + ':' + (ti + 1) + ':m');
+			const cls = 'tok' + (k.glue ? ' glue' : '') + (k.t == null ? ' unset' : '') + (lv ? ' ' + lv : '') +
+				(rd ? ' rd-' + rd.kind : '') + (rm ? ' rd-miss' : '') + (ra ? ' rd-miss-after' : '');
+			const rt = [rd, rm, ra].filter(Boolean).map(refTitle).join(' · ');
+			html.push('<span class="' + cls + '" data-li="' + li + '" data-ti="' + ti + '"' + (rt ? ' title="' + esc(rt) + '"' : '') +
+				'><span class="w">' + esc(k.text) +
 				'</span><small>' + (k.t != null ? LRC.fmt(k.t) : ghostText(li, ti)) + '</small></span>');
 			const last = ti === ln.tokens.length - 1;
 			if (last || k.end != null) {
@@ -1157,6 +1263,20 @@ function renderMeta() {
 		const m = doc.meta.find(x => x[0] === inp.dataset.key);
 		inp.value = m ? m[1] : '';
 	});
+	metaSum();
+}
+
+// folded Song panel: artist – title · status in its heading
+function metaSum() {
+	const v = k => (doc.meta.find(x => x[0] === k) || [])[1] || '';
+	$('metaSum').textContent = [[v('ar'), v('ti')].filter(Boolean).join(' – '), v('status')].filter(Boolean).join(' · ');
+}
+
+function foldMeta(closed) {
+	$('metaFold').classList.toggle('closed', closed);
+	$('metaFold').setAttribute('aria-expanded', !closed);
+	$('meta').hidden = closed;
+	try { localStorage.setItem('lrcEditorMetaFold', closed ? '1' : '0'); } catch (e) { /* ignore */ }
 }
 
 function renderInfo() {
@@ -1195,7 +1315,7 @@ function updatePlaying(now) {
 		playLi = li;
 		if (lineEls[li]) {
 			lineEls[li].classList.add('playing');
-			if ($('follow').checked && !audio.paused && !snip && performance.now() - lastTap > 3000)
+			if ($('follow').checked && !audio.paused && (!snip || snip.hold) && performance.now() - lastTap > 3000)
 				lineEls[li].scrollIntoView({block: 'center', behavior: 'smooth'});
 		}
 	}
@@ -1269,11 +1389,12 @@ function css(name) {
 
 const C = {};
 const UI_FONT = '"Segoe UI Variable Text", -apple-system, "SF Pro Text", Inter, system-ui, sans-serif';
-const LANE_Y = 137;             // timeline: words and waveform above, line boxes from here, seconds at the bottom
+let LANE_Y = 137;               // timeline: words and waveform above, line boxes from here, seconds at the bottom;
+                                // grows with the timeline height (splitter under it, see setTlH)
 
 function drawTimeline(now) {
 	const [ctx, W, H] = fitCanvas($('timeline'), LANE_Y + 42);
-	if (!audio.paused && $('follow').checked && !drag && !snip && !loop) view.start = Math.max(0, now - view.span * 0.25);
+	if (!audio.paused && $('follow').checked && !drag && (!snip || snip.hold) && !loop) view.start = Math.max(0, now - view.span * 0.25);
 	const t0 = view.start, sp = view.span;
 	const X = t => (t - t0) / sp * W;
 	ctx.clearRect(0, 0, W, H);
@@ -1338,12 +1459,12 @@ function drawTimeline(now) {
 	// waveform
 	if (peaks) {
 		ctx.fillStyle = C.wave;
-		const mid = 88;
+		const mid = (LANE_Y + 39) / 2, amp = (LANE_Y - 45) / 2;   // between the labels and the word bars
 		for (let px = 0; px < W; px++) {
 			const a = Math.floor((t0 + px / W * sp) * PEAK_RATE), b = Math.max(a + 1, Math.floor((t0 + (px + 1) / W * sp) * PEAK_RATE));
 			let m = 0;
 			for (let i = Math.max(0, a); i < Math.min(peaks.length, b); i++) if (peaks[i] > m) m = peaks[i];
-			const h = m * 46;
+			const h = m * amp;
 			ctx.fillRect(px, mid - h, 1, h * 2 || 1);
 		}
 	}
@@ -1387,7 +1508,7 @@ function drawTimeline(now) {
 		const isSel = sel && !sel.end && sel.li === e.li && sel.ti === e.ti;
 		const sung = now >= e.k.t;
 		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : sung ? C.sung : C.lane;
-		const by = bgw ? 104 : 116, bh = bgw ? 9 : 14;
+		const by = bgw ? LANE_Y - 33 : LANE_Y - 21, bh = bgw ? 9 : 14;
 		ctx.globalAlpha = 0.55;
 		ctx.fillRect(x, by, Math.max(2, xe - x - 1), bh);
 		ctx.globalAlpha = 1;
@@ -1404,7 +1525,7 @@ function drawTimeline(now) {
 			ctx.setLineDash([3, 3]);
 			ctx.beginPath();
 			ctx.moveTo(xe + 0.5, 40);
-			ctx.lineTo(xe + 0.5, 134);
+			ctx.lineTo(xe + 0.5, LANE_Y - 3);
 			ctx.stroke();
 			ctx.setLineDash([]);
 			ctx.font = '10px ' + UI_FONT;
@@ -1413,7 +1534,7 @@ function drawTimeline(now) {
 			marks.push({x: xe, li: e.li, ti: e.ti, end: true, sugg: true});
 		}
 		ctx.fillStyle = isSel ? C.cursor : lv === 'err' ? C.err : e.ti === 0 ? C.textHi : C.mark;
-		ctx.fillRect(x - (isSel ? 1 : 0), 0, isSel ? 3 : 1, 132);
+		ctx.fillRect(x - (isSel ? 1 : 0), 0, isSel ? 3 : 1, LANE_Y - 5);
 		const nxv = vis.slice(n + 1).find(o => lane(o) === lane(e));
 		const nextX = nxv ? X(nxv.k.t) : W;
 		ctx.save();
@@ -1433,8 +1554,8 @@ function drawTimeline(now) {
 			const isSelE = sel && sel.end && sel.li === e.li && sel.ti === e.ti;
 			const le = issueAt.get(e.li + ':' + e.ti + ':e');
 			ctx.fillStyle = isSelE ? C.cursor : le === 'err' ? C.err : C.ok;
-			ctx.fillRect(xm - (isSelE ? 1 : 0), 40, isSelE ? 3 : 1, 92);
-			ctx.fillRect(xm - 4, 128, 8, 6);
+			ctx.fillRect(xm - (isSelE ? 1 : 0), 40, isSelE ? 3 : 1, LANE_Y - 45);
+			ctx.fillRect(xm - 4, LANE_Y - 9, 8, 6);
 			ctx.font = '10px ' + UI_FONT;
 			ctx.fillText(last ? 'Ende' : 'Pause', xm + 3, 52);
 			marks.push({x: xm, li: e.li, ti: e.ti, end: true});
@@ -1453,7 +1574,7 @@ function drawTimeline(now) {
 			if (!k || k.t != null || g.t == null || g.t < t0 - 1 || g.t > t0 + sp) continue;
 			ctx.beginPath();
 			ctx.moveTo(X(g.t) + 0.5, 30);
-			ctx.lineTo(X(g.t) + 0.5, 132);
+			ctx.lineTo(X(g.t) + 0.5, LANE_Y - 5);
 			ctx.stroke();
 			ctx.fillText(k.text, X(g.t) + 3, 44);
 		}
@@ -1463,6 +1584,20 @@ function drawTimeline(now) {
 	// playhead
 	ctx.fillStyle = C.play;
 	ctx.fillRect(X(now) - 1, 0, 2, H);
+
+	// ✂ blade: a red cut line at the mouse with its time
+	if (blade && hoverX != null) {
+		ctx.strokeStyle = C.err;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(hoverX, 0);
+		ctx.lineTo(hoverX, H);
+		ctx.stroke();
+		ctx.lineWidth = 1;
+		ctx.font = 'bold 12px ' + UI_FONT;
+		ctx.fillStyle = C.err;
+		ctx.fillText('✂ ' + LRC.fmt(LRC.q(t0 + hoverX / W * sp)).slice(3), Math.min(W - 70, hoverX + 5), 14);
+	}
 
 	// mouse placement: the marked word as a flag at the mouse, its name centred on top
 	const k = placing() && hoverX != null && sel && doc.lines[sel.li] && doc.lines[sel.li].tokens[sel.ti];
@@ -1545,7 +1680,7 @@ function frame() {
 function typing(e) {
 	const t = e.target;
 	return t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'checkbox') || $('dlgNew').open || $('dlgReset').open ||
-		$('dlgFolder').open;
+		$('dlgFolder').open || $('dlgRef').open || $('dlgSave').open || $('dlgName').open;
 }
 
 // times of the marked word change only inside edit mode (or while repairing / tapping)
@@ -1567,6 +1702,7 @@ window.addEventListener('keydown', e => {
 	if (k === 'Backspace') backTap();
 	else if (low === 'e') { if (edit || tapMode()) endNow(); else canTime(); }
 	else if (low === 'p') audio.paused ? play() : pause();
+	else if (k === 'Escape' && blade) setBlade(false);
 	else if (k === 'Escape') {
 		if (loop && loop.kind !== 'zone') { loop = null; pause(); } else if (edit) endEdit(false); else { loop = null; pause(); }
 	}
@@ -1574,6 +1710,7 @@ window.addEventListener('keydown', e => {
 	else if (low === 'l') toggleLoop();
 	else if (low === 'n') nextProblem(e.shiftKey ? -1 : 1);
 	else if (low === 'r') startRepair();
+	else if (low === 'x') setBlade(!blade);
 	else if (low === 'v') setVoice();
 	else if (low === 't') {
 		$('tapMode').checked = !tapMode();
@@ -1677,7 +1814,7 @@ const tlTime = x => LRC.q(Math.max(0, view.start + x / tl.clientWidth * view.spa
 tl.addEventListener('contextmenu', e => e.preventDefault());
 tl.addEventListener('mousemove', e => {
 	hoverX = e.offsetX;
-	if (!drag) tl.style.cursor = tlCursor(e.offsetX, e.offsetY);
+	if (!drag) tl.style.cursor = blade ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
 });
 
 // what a press would do here: edges resize (ew-resize), word and line boxes move (grab), else the CSS default
@@ -1788,11 +1925,12 @@ function dragLine(li, x0) {
 tl.addEventListener('mouseleave', () => { hoverX = null; });
 tl.addEventListener('mousedown', e => {
 	const x = e.offsetX, y = e.offsetY;
-	if (e.button === 2) {
-		audition(tlTime(x));
+	if (e.button === 2) {                        // right button: plays while held, a click plays snipLen
+		audition(tlTime(x), true);
 		return;
 	}
 	if (e.button !== 0) return;
+	if (blade) { cutLine(lineAtX(x, y), tlTime(x)); return; }
 	if (y >= LANE_Y - 1) {                       // line box: click = mark that line, drag = move the whole line
 		const b = lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
 			lanes.find(l => x >= l.x0 && x <= l.x1);
@@ -1923,6 +2061,7 @@ $('fileAudio').onchange = e => { if (e.target.files[0]) loadAudio(e.target.files
 $('btnOpen').onclick = openLrc;
 $('fileLrc').onchange = e => { if (e.target.files[0]) loadLrcFile(e.target.files[0]); e.target.value = ''; };
 $('btnSave').onclick = () => save(false);
+$('btnSplit').onclick = () => setBlade(!blade);
 $('btnSaveAs').onclick = () => save(true);
 $('btnPlay').onclick = () => audio.paused ? play() : pause();
 try { loopMode = localStorage.getItem('lrcEditorLoopMode') !== '0'; } catch (e) { /* ignore */ }
@@ -1960,11 +2099,21 @@ $('maxGap').onchange = () => {
 	changed(false);
 };
 try { const g = localStorage.getItem('lrcEditorMaxGap'); if (g) $('maxGap').value = g; } catch (e) { /* ignore */ }
-$('btnHelp').onclick = () => { $('help').hidden = !$('help').hidden; $('btnHelp').classList.toggle('on', !$('help').hidden); };
+$('btnHelp').onclick = () => {
+	$('help').hidden = !$('help').hidden;
+	$('btnHelp').classList.toggle('on', !$('help').hidden);
+	if (!$('help').hidden) $('help').scrollIntoView({block: 'start', behavior: 'smooth'});
+};
+// tour in the help: pointing at an entry outlines its area on the page
+document.querySelectorAll('#tour [data-area]').forEach(li => {
+	const area = () => document.querySelector(li.dataset.area);
+	li.addEventListener('mouseenter', () => area()?.classList.add('tour-hl'));
+	li.addEventListener('mouseleave', () => area()?.classList.remove('tour-hl'));
+});
 document.querySelectorAll('.speed').forEach(b => { b.onclick = () => setRate(+b.dataset.rate); });
 
-$('btnNew').onclick = () => {
-	if (dirty && !confirm('Ungespeicherte Änderungen verwerfen?')) return;
+$('btnNew').onclick = async () => {
+	if (!await askSave()) return;
 	newTarget = null;
 	openNew('', '');
 };
@@ -1994,9 +2143,12 @@ document.querySelectorAll('#meta input').forEach(inp => {
 		else if (v) doc.meta.push([key, v]);
 		dirty = true;
 		renderInfo();
+		metaSum();
 		saveDraftSoon();
 	});
 });
+$('metaFold').onclick = () => foldMeta(!$('meta').hidden);
+try { foldMeta(localStorage.getItem('lrcEditorMetaFold') === '1'); } catch (e) { foldMeta(false); }
 
 $('fixSame').onclick = () => {
 	pushUndo();
@@ -2058,20 +2210,38 @@ async function openFolder() {
 
 async function walk(dir, path, out, depth) {
 	for await (const [name, h] of dir.entries()) {
-		if (h.kind === 'directory') { if (depth < 4 && !name.startsWith('.')) await walk(h, path + name + '/', out, depth + 1); }
+		if (h.kind === 'directory') { if (depth < 8 && !name.startsWith('.')) await walk(h, path + name + '/', out, depth + 1); }
 		else if (AUDIO_RE.test(name) || LRC_RE.test(name)) out.push({name, path: path + name, dir, handle: h, get: () => h.getFile()});
 	}
 }
 
+// the key two files are paired by: case, accents, "_" / "'" and punctuation do not count
+const songKey = n => cleanStem(stemOf(n)).toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\p{L}\p{N}]+/gu, '');
+// looser: without "Artist - " and without (Mix ...) / [Edit ...]
+const looseKey = n => songKey(cleanStem(stemOf(n)).replace(/^.*?\s+-\s+/, '').replace(/\s*[([][^)\]]*[)\]]/g, '') + '.x');
+
 function setFolder(name, files) {
 	const by = new Map();
 	for (const f of files) {
-		const key = cleanStem(stemOf(f.name)).toLowerCase();
+		const key = songKey(f.name);
 		if (!by.has(key)) by.set(key, {key, audio: [], lrc: []});
 		by.get(key)[AUDIO_RE.test(f.name) ? 'audio' : 'lrc'].push(f);
 	}
+	// an LRC still alone: pair it with an audio still alone if exactly one fits loosely
+	// ("Artist - Title.mp3" + "Title_enhanced.lrc", "Song (Extended Mix).wav" + "Song.lrc", files in other subfolders)
+	const alone = k => [...by.values()].filter(s => (k === 'lrc' ? s.lrc.length && !s.audio.length : s.audio.length && !s.lrc.length));
+	for (const s of alone('lrc')) {
+		const lk = looseKey(s.lrc[0].name), lt = songKey(s.lrc[0].name);
+		const fit = alone('audio').filter(a => { const ak = looseKey(a.audio[0].name), at = songKey(a.audio[0].name);
+			return ak === lk || (lk.length > 3 && (at.includes(lt) || lt.includes(at))); });
+		if (fit.length !== 1) continue;
+		fit[0].lrc.push(...s.lrc);
+		fit[0].loose = true;
+		by.delete(s.key);
+	}
 	const anyLrc = files.find(f => LRC_RE.test(f.name) && f.dir);   // new LRCs go where the others are
-	folder = {name, songs: [...by.values()].sort((a, b) => a.key.localeCompare(b.key)), lrcDir: anyLrc ? anyLrc.dir : null};
+	folder = {name, songs: [...by.values()].sort((a, b) => a.key.localeCompare(b.key)), lrcDir: anyLrc ? anyLrc.dir : null, cur: -1};
+	renderSongNav();
 	renderFolder();
 	$('dlgFolder').showModal();
 }
@@ -2079,24 +2249,30 @@ function setFolder(name, files) {
 // a new LRC was saved into the folder: show it in the list
 function folderAdd(h) {
 	if (!folder || !newTarget) return;
-	const key = cleanStem(stemOf(h.name)).toLowerCase();
-	let s = folder.songs.find(x => x.key === key);
+	const key = songKey(h.name);
+	let s = folder.songs.find(x => x.key === key) || folder.songs[folder.cur];
 	if (!s) folder.songs.push(s = {key, audio: [], lrc: []});
 	if (!s.lrc.some(f => f.name === h.name))
 		s.lrc.push({name: h.name, path: h.name, dir: newTarget.dir, handle: h, get: () => h.getFile()});
+	renderSongNav();
 }
 
 function renderFolder() {
 	const songs = folder.songs, noLrc = songs.filter(s => s.audio.length && !s.lrc.length).length;
 	const noAudio = songs.filter(s => !s.audio.length).length, twice = songs.filter(s => s.lrc.length > 1).length;
 	$('folderName').textContent = folder.name;
+	$('folderOk').innerHTML = songs.length ? '✓ <b>Ordner ausgewählt</b> – alle Unterordner sind mit durchsucht. Du kannst das Fenster jetzt schließen (ohne Auswahl öffnet sich der oberste Song) und oben mit ◀ ▶ durch die Songs blättern, oder hier direkt einen Song öffnen.' :
+		'Keine Audio- oder LRC-Dateien in diesem Ordner (auch nicht in Unterordnern). „Anderer Ordner …“ wählen.';
+	$('folderOk').classList.toggle('none', !songs.length);
 	$('folderSum').textContent = songs.length + ' Songs · ' + (songs.length - noLrc - noAudio) + ' komplett' +
 		(noLrc ? ' · ' + noLrc + ' ohne LRC' : '') + (noAudio ? ' · ' + noAudio + ' LRC ohne Audio' : '') +
 		(twice ? ' · ' + twice + ' mit mehreren LRCs' : '');
 	$('folderList').innerHTML = songs.map((s, i) => {
 		const a = s.audio[0], l = s.lrc[0];
 		const state = !s.audio.length ? '<span class="fs warn">kein Audio</span>' : !s.lrc.length ? '<span class="fs err">keine LRC</span>' :
-			s.lrc.length > 1 ? '<span class="fs warn">' + s.lrc.length + ' LRCs</span>' : '<span class="fs ok">✓</span>';
+			s.lrc.length > 1 ? '<span class="fs warn">' + s.lrc.length + ' LRCs</span>' :
+			s.loose ? '<span class="fs ok" title="Name nicht gleich, aber eindeutig zugeordnet – beim Speichern schlage ich den Audio-Namen vor">≈</span>' :
+			'<span class="fs ok">✓</span>';
 		const btn = s.audio.length && !s.lrc.length ? '<button type="button" data-i="' + i + '" data-act="new">LRC erstellen</button>' :
 			'<button type="button" data-i="' + i + '" data-act="open">Öffnen</button>';
 		return '<div class="frow">' + state + '<span class="fn" title="' + esc((a || l).path) + '">' + esc(stemOf((a || l).name)) +
@@ -2105,24 +2281,85 @@ function renderFolder() {
 }
 
 async function openSong(s, create) {
-	if (dirty && !confirm('Ungespeicherte Änderungen verwerfen?')) return;
+	if (!await askSave()) { renderSongNav(); return; }
 	dirty = false;
 	$('dlgFolder').close();
-	if (s.audio.length) await loadAudio(await s.audio[0].get());
+	folder.cur = folder.songs.indexOf(s);
+	renderSongNav();
+	if (s.audio.length) await loadAudio(await s.audio[0].get(), s.audio[0].handle || null);
 	if (s.lrc.length) {
 		await loadLrcFile(await s.lrc[0].get(), s.lrc[0].handle || null);
 		if (s.lrc.length > 1) hint('Achtung: ' + s.lrc.length + ' LRCs für diesen Song (' + s.lrc.map(f => f.path).join(', ') +
 			'). Player nehmen nur eine – die übrigen bitte löschen.');
 		return;
 	}
+	setDoc({meta: [], lines: [], warnings: []}, '', null);   // the LRC of the song before must not stay (or be saved over)
 	if (!create && !confirm('Für „' + s.audio[0].name + '“ gibt es noch keine LRC. Jetzt eine erstellen?')) return;
 	const st = stemOf(s.audio[0].name), m = st.match(/^(.+?)\s+-\s+(.+)$/);
 	newTarget = {dir: folder.lrcDir || s.audio[0].dir, name: st + '.lrc'};
 	openNew(m ? m[2] : st, m ? m[1] : '');
 }
 
+// ◀ ▶ and the list in the header step through the songs of the folder, round at both ends
+function renderSongNav() {
+	$('songNav').hidden = !folder || !folder.songs.length;
+	if (!folder) return;
+	$('songSel').innerHTML = (folder.cur < 0 ? '<option value="-1">Song wählen …</option>' : '') + folder.songs.map((s, i) => {
+		const f = s.audio[0] || s.lrc[0];
+		return '<option value="' + i + '">' + esc(stemOf(f.name)) + (!s.lrc.length ? '  (keine LRC)' : !s.audio.length ? '  (kein Audio)' : '') + '</option>';
+	}).join('');
+	$('songSel').value = folder.cur;
+	$('songSel').title = folder.name + ': ' + (folder.cur + 1) + ' / ' + folder.songs.length;
+}
+
+function stepSong(d) {
+	if (!folder || !folder.songs.length) return;
+	const n = folder.songs.length, i = folder.cur < 0 ? (d > 0 ? 0 : n - 1) : (folder.cur + d + n) % n;
+	openSong(folder.songs[i], true);
+}
+
+// unsaved changes before something else is opened: save, throw away or stay. -> true = go on
+function askSave() {
+	if (!dirty) return Promise.resolve(true);
+	if ($('dlgSave').open) return Promise.resolve(false);
+	$('saveName').textContent = fileName || suggestName();
+	return choose($('dlgSave')).then(async v => {
+		if (v === 'save') { await save(false); return !dirty; }
+		if (v === 'drop') { dirty = false; return true; }
+		return false;
+	});
+}
+
+// shows a dialog and answers with the value of the button clicked in it, Esc = 'cancel'. Listens to the clicks
+// themselves, not to 'close' (that one comes late or not at all in a hidden tab)
+function choose(dlg) {
+	dlg.showModal();
+	return new Promise(res => {
+		const done = v => {
+			dlg.removeEventListener('click', onClick);
+			dlg.removeEventListener('cancel', onEsc);
+			dlg.close(v);
+			res(v);
+		};
+		const onClick = e => { const b = e.target.closest('button[value]'); if (b) { e.preventDefault(); done(b.value); } };
+		const onEsc = e => { e.preventDefault(); done('cancel'); };
+		dlg.addEventListener('click', onClick);
+		dlg.addEventListener('cancel', onEsc);
+	});
+}
+
+$('songPrev').onclick = () => stepSong(-1);
+$('songNext').onclick = () => stepSong(1);
+$('songSel').onchange = () => { const i = +$('songSel').value; if (i >= 0) openSong(folder.songs[i], true); };
+
 $('btnFolder').onclick = () => folder ? (renderFolder(), $('dlgFolder').showModal()) : openFolder();
-$('folderOther').onclick = () => { $('dlgFolder').close(); openFolder(); };
+let folderKeep = false;          // the folder list closes for another folder: open no song
+$('folderOther').onclick = () => { folderKeep = true; $('dlgFolder').close(); openFolder(); };
+// closed without picking a song: the top one is opened
+$('dlgFolder').addEventListener('close', () => {
+	if (folderKeep) { folderKeep = false; return; }
+	if (folder && folder.cur < 0 && folder.songs.length) openSong(folder.songs[0], true);
+});
 $('fileFolder').onchange = e => {
 	const files = [...e.target.files].filter(f => AUDIO_RE.test(f.name) || LRC_RE.test(f.name))
 		.map(f => ({name: f.name, path: f.webkitRelativePath || f.name, dir: null, handle: null, get: async () => f}));
@@ -2144,11 +2381,47 @@ window.addEventListener('drop', e => {
 	e.preventDefault();
 	dragDepth = 0;
 	document.body.classList.remove('drop');
-	for (const f of e.dataTransfer.files) {
-		if (/\.(lrc|txt)$/i.test(f.name)) loadLrcFile(f);
-		else if (f.type.startsWith('audio/') || /\.(mp3|wav|flac|m4a|aiff?|ogg)$/i.test(f.name)) loadAudio(f);
+	const items = [...e.dataTransfer.items].filter(it => it.kind === 'file');
+	const entries = items.map(it => it.webkitGetAsEntry && it.webkitGetAsEntry());
+	const dirAt = entries.findIndex(en => en && en.isDirectory);
+	if (dirAt >= 0) {
+		// Chrome / Edge: a real folder handle, so new LRCs can be written into it; else the files are only read
+		const hp = items[dirAt].getAsFileSystemHandle ? items[dirAt].getAsFileSystemHandle().catch(() => null) : Promise.resolve(null);
+		dropFolder(hp, entries[dirAt]);
+		return;
 	}
+	const hs = items.map(it => it.getAsFileSystemHandle ? it.getAsFileSystemHandle().catch(() => null) : Promise.resolve(null));
+	[...e.dataTransfer.files].forEach(async (f, i) => {
+		const h = await hs[i];
+		if (/\.(lrc|txt)$/i.test(f.name)) loadLrcFile(f, h && h.kind === 'file' && LRC_RE.test(f.name) ? h : null);
+		else if (f.type.startsWith('audio/') || /\.(mp3|wav|flac|m4a|aiff?|ogg)$/i.test(f.name)) loadAudio(f, h && h.kind === 'file' ? h : null);
+	});
 });
+
+async function dropFolder(hp, entry) {
+	if (!await askSave()) return;
+	const h = await hp, files = [];
+	if (h && h.kind === 'directory') {
+		await walk(h, '', files, 0);
+		setFolder(h.name, files);
+		return;
+	}
+	await walkEntry(entry, '', files, 0);
+	setFolder(entry.name, files);
+}
+
+async function walkEntry(dir, path, out, depth) {
+	const reader = dir.createReader();
+	for (;;) {
+		const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+		if (!batch.length) break;
+		for (const en of batch) {
+			if (en.isDirectory) { if (depth < 8 && !en.name.startsWith('.')) await walkEntry(en, path + en.name + '/', out, depth + 1); }
+			else if (AUDIO_RE.test(en.name) || LRC_RE.test(en.name))
+				out.push({name: en.name, path: path + en.name, dir: null, handle: null, get: () => new Promise((res, rej) => en.file(res, rej))});
+		}
+	}
+}
 
 window.addEventListener('beforeunload', e => {
 	if (dirty) { e.preventDefault(); e.returnValue = ''; }
@@ -2193,30 +2466,55 @@ function bubbleSprites() {
 	return out;
 }
 
-function burst(x, y, w, h, n) {
-	if (!bubblesOn()) return;
-	if (!fx.cv) {
-		fx.cv = $('fx');
-		fx.ctx = fx.cv.getContext('2d');
-		fx.sprites = bubbleSprites();
-	}
-	n = Math.min(n, 700 - fx.list.length);
+const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function burst(x, y, w, h, n, party = false) {
+	if (party ? calm() : !bubblesOn()) return;
+	fxInit();
+	n = Math.min(n, 900 - fx.list.length);
 	for (let i = 0; i < n; i++) {
-		const big = Math.random() < 0.18;
+		const big = Math.random() < (party ? 0.35 : 0.18);
 		fx.list.push({
 			x: x + Math.random() * w, y: y + Math.random() * h,
-			r: big ? 11 + Math.random() * 9 : 4 + Math.random() * 6,
-			vx: (Math.random() - 0.5) * 60, vy: -(30 + Math.random() * 70),
+			r: party ? (big ? 18 + Math.random() * 22 : 6 + Math.random() * 12) : big ? 11 + Math.random() * 9 : 4 + Math.random() * 6,
+			vx: (Math.random() - 0.5) * (party ? 120 : 60), vy: -(party ? 140 + Math.random() * 220 : 30 + Math.random() * 70),
 			ph: Math.random() * 6.3, wob: 0.6 + Math.random() * 1.6,
-			age: -Math.random() * 0.12, life: 1.1 + Math.random() * 1.5,
+			age: -Math.random() * 0.12, life: party ? 2.2 + Math.random() * 2.4 : 1.1 + Math.random() * 1.5,
 			sp: fx.sprites[(Math.random() * fx.sprites.length) | 0],
 		});
 	}
-	if (!fx.run) {
-		fx.run = true;
-		fx.last = performance.now();
-		requestAnimationFrame(fxFrame);
+	fxStart();
+}
+
+// confetti for the party: little paper strips falling from the top, tumbling
+const CONFETTI = ['#ff4f9a', '#ffb547', '#5ce1e6', '#9b7bff', '#7dff9b', '#ffffff'];
+function confetti(n) {
+	if (calm()) return;
+	fxInit();
+	n = Math.min(n, 900 - fx.list.length);
+	for (let i = 0; i < n; i++) {
+		fx.list.push({
+			conf: true, x: Math.random() * innerWidth, y: -20 - Math.random() * 60,
+			vx: (Math.random() - 0.5) * 140, vy: 60 + Math.random() * 160, w: 6 + Math.random() * 6, h: 3 + Math.random() * 4,
+			rot: Math.random() * 6.3, spin: (Math.random() - 0.5) * 14, ph: Math.random() * 6.3,
+			age: 0, life: 3 + Math.random() * 2, col: CONFETTI[(Math.random() * CONFETTI.length) | 0],
+		});
 	}
+	fxStart();
+}
+
+function fxInit() {
+	if (fx.cv) return;
+	fx.cv = $('fx');
+	fx.ctx = fx.cv.getContext('2d');
+	fx.sprites = bubbleSprites();
+}
+
+function fxStart() {
+	if (fx.run) return;
+	fx.run = true;
+	fx.last = performance.now();
+	requestAnimationFrame(fxFrame);
 }
 
 function fxFrame(ts) {
@@ -2235,6 +2533,22 @@ function fxFrame(ts) {
 		if (b.age < 0) return true;
 		const k = b.age / b.life;
 		if (k >= 1) return false;
+		if (b.conf) {
+			b.vy += 60 * dt;
+			b.vx *= 1 - 0.8 * dt;
+			b.x += (b.vx + Math.sin(b.ph + b.age * 3) * 40) * dt;
+			b.y += b.vy * dt;
+			b.rot += b.spin * dt;
+			g.globalAlpha = k > 0.8 ? (1 - k) * 5 : 1;
+			g.fillStyle = b.col;
+			g.save();
+			g.translate(b.x, b.y);
+			g.rotate(b.rot);
+			g.scale(1, Math.cos(b.ph + b.age * 7));     // tumbling: the strip turns its edge to us
+			g.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+			g.restore();
+			return b.y < innerHeight + 30;
+		}
 		b.vy -= 40 * dt;                               // buoyancy: they speed up while rising
 		b.vx *= 1 - 1.5 * dt;
 		b.x += (b.vx + Math.sin(b.ph + b.age * 5 * b.wob) * 22) * dt;
@@ -2261,8 +2575,20 @@ function fxFrame(ts) {
 }
 
 // an element about to disappear: a copy squishes and fades where it was, bubbles rise out of it
+let blubAt = 0;
+const blubSnd = new Audio('assets/blub.wav');
+function blub() {                               // once per deletion, even when several things burst at once
+	const now = performance.now();
+	if (now - blubAt < 150) return;
+	blubAt = now;
+	const s = blubSnd.cloneNode();
+	s.volume = 0.8;
+	s.play().catch(() => {});
+}
+
 function popEl(el) {
 	if (!el || !bubblesOn()) return;
+	blub();
 	const r = el.getBoundingClientRect();
 	if (!r.width || r.bottom < 0 || r.top > innerHeight) return;
 	const ghost = el.cloneNode(true);
@@ -2275,6 +2601,7 @@ function popEl(el) {
 
 // a deleted mark in the timeline: bubbles rise out of its line
 function popMark(t) {
+	if (bubblesOn()) blub();
 	const r = $('timeline').getBoundingClientRect();
 	const x = r.left + (t - view.start) / view.span * r.width;
 	if (x < r.left || x > r.right) return;
@@ -2284,6 +2611,7 @@ function popMark(t) {
 // reset of all word times: every visible timed word gives a few bubbles, the timeline a cloud
 function popAll() {
 	if (!bubblesOn()) return;
+	blub();
 	let n = 0;
 	for (const row of tokEls) for (const el of row || []) {
 		if (n >= 120 || !el || el.classList.contains('unset')) continue;
@@ -2293,6 +2621,247 @@ function popAll() {
 	const c = $('timeline').getBoundingClientRect();
 	burst(c.left, c.top, c.width, LANE_Y, 40);
 }
+
+// ---------------------------------------------------------------- finished: name and status into the LRC, save, party
+//
+// The name is asked once and kept in the browser (⚙ Dein Name). It goes into [by:], [status:Fertig] marks the
+// file as done; players ignore unknown tags.
+
+const myName = () => { try { return (localStorage.getItem('lrcEditorName') || '').trim(); } catch (e) { return ''; } };
+function setMyName(n) { try { localStorage.setItem('lrcEditorName', n.trim()); } catch (e) { /* ignore */ } }
+
+function setMeta(key, v) {
+	const m = doc.meta.find(x => x[0] === key);
+	if (m) m[1] = v; else doc.meta.push([key, v]);
+}
+
+async function finish() {
+	if (edit) { lockedHint(); return; }
+	if (!doc.lines.length) { hint('Noch keine Lyrics da – erst eine LRC öffnen oder „Neu aus Text“.'); return; }
+	const open = LRC.flat(doc).filter(e => e.k.t == null).length, errs = issues.filter(i => i.level === 'err').length;
+	if ((open || errs) && !confirm('Noch nicht ganz sauber: ' + [open ? open + ' Wörter ohne Zeit' : '', errs ? errs + ' Fehler in der Prüfung' : '']
+		.filter(Boolean).join(', ') + '.\nTrotzdem als fertig speichern?')) return;
+	let name = myName();
+	if (!name) {
+		$('nameIn').value = '';
+		setTimeout(() => $('nameIn').focus(), 50);
+		if (await choose($('dlgName')) !== 'ok') return;
+		name = $('nameIn').value.trim();
+		if (!name) { hint('Ohne Namen geht’s nicht – trag ihn ein, dann nochmal 🎉 Fertig.'); return; }
+		setMyName(name);
+		$('myName').value = name;
+	}
+	pushUndo();
+	setMeta('by', name);
+	setMeta('status', 'Fertig');
+	dirty = true;
+	renderMeta();
+	renderInfo();
+	await save(false);
+	if (dirty) return;                             // not saved (dialog cancelled): no party
+	party(name);
+}
+
+const partySnd = new Audio('assets/party.wav');
+function party(name) {
+	partySnd.currentTime = 0;
+	partySnd.volume = 0.9;
+	partySnd.play().catch(() => {});
+	document.querySelector('.party')?.remove();
+	const el = document.createElement('div');
+	el.className = 'party';
+	el.innerHTML = '<div class="party-card"><div class="party-emoji">🎉</div><h2>Danke, <span class="grad">' + esc(name) + '</span>!</h2>' +
+		'<p>Danke für deinen Support! „' + esc(fileName) + '“ ist fertig und gespeichert.</p></div>';
+	document.body.appendChild(el);
+	const gone = () => { el.classList.add('out'); setTimeout(() => el.remove(), 500); };
+	el.onclick = gone;
+	setTimeout(gone, 6000);
+	for (let w = 0; w < 15; w++) setTimeout(() => {
+		burst(0, innerHeight - 10, innerWidth, 30, 28, true);
+		if (w < 8) confetti(45);
+	}, w * 300);
+}
+
+$('btnDone').onclick = finish;
+$('myName').value = myName();
+$('myName').onchange = () => setMyName($('myName').value);
+
+// ---------------------------------------------------------------- compare with the original lyrics
+//
+// The original text (pasted or a .txt) is compared with every line, see LRC.compareRef. Each difference is listed
+// in the side panel with a suggestion (replace, insert, delete) and marked in the word list. Runs again on every
+// change; ✕ hides one suggestion for good.
+
+function runRef() {
+	refDiffs = [];
+	refAt = new Map();
+	if (!refLines) return;
+	const key = d => d.kind + '|' + LRC.lineText(doc.lines[d.li], false) + '|' + (d.have || '') + '|' + (d.want || '');
+	refDiffs = LRC.compareRef(doc, refLines);
+	refDiffs.forEach(d => { d.key = key(d); });
+	refDiffs = refDiffs.filter(d => !refSkip.has(d.key));
+	for (const d of refDiffs) {
+		if (d.kind === 'miss') refAt.set(d.li + ':' + d.ti0 + ':m', d);
+		else if (d.kind !== 'nomatch') for (let ti = d.ti0; ti <= d.ti1; ti++) refAt.set(d.li + ':' + ti, d);
+	}
+}
+
+function refTitle(d) {
+	return d.kind === 'sub' ? 'Original: „' + d.want + '“' : d.kind === 'extra' ? 'Steht nicht im Original' :
+		d.kind === 'miss' ? 'Hier fehlt „' + d.want + '“' : '';
+}
+
+function renderRef() {
+	$('refBox').hidden = !refLines;
+	if (!refLines) return;
+	const nm = refDiffs.filter(d => d.kind === 'nomatch').length, n = refDiffs.length - nm;
+	$('refSum').textContent = refDiffs.length ? (n ? n + ' Abweichungen' : '') + (n && nm ? ' · ' : '') +
+		(nm ? nm + ' Zeilen nicht gefunden' : '') : 'wie im Original ✓';
+	$('refAll').hidden = !refDiffs.some(d => d.kind === 'sub');
+	$('refList').innerHTML = refDiffs.slice(0, 400).map((d, i) => {
+		const z = '<b>Z. ' + (d.li + 1) + '</b> ';
+		const btn = label => ' <button data-ract="apply" data-i="' + i + '">' + label + '</button>';
+		const body = d.kind === 'sub' ? z + '„' + esc(d.have) + '“ → „' + esc(d.want) + '“' + btn('Tauschen') :
+			d.kind === 'miss' ? z + 'fehlt „' + esc(d.want) + '“' + (d.after ? ' nach „' + esc(d.after) + '“' : ' am Anfang') + btn('Einfügen') :
+			d.kind === 'extra' ? z + '„' + esc(d.have) + '“ steht nicht im Original' + btn('Löschen') :
+			z + 'Zeile nicht im Original gefunden';
+		return '<div class="issue rd ' + d.kind + '" data-i="' + i + '"' + (d.ref ? ' title="Original: ' + esc(d.ref) + '"' : '') + '>' +
+			body + '<button class="skip" data-ract="skip" data-i="' + i + '" title="Ignorieren">✕</button></div>';
+	}).join('');
+}
+
+// one suggestion into the text; in a batch the caller takes care of undo and changed()
+function applyRef(d, batch = false) {
+	const ln = doc.lines[d.li];
+	if (!ln || d.kind === 'nomatch') return false;
+	if (!batch) pushUndo();
+	if (d.kind === 'sub') {
+		const k = ln.tokens[d.ti0], lastK = ln.tokens[d.ti1];
+		k.text = d.want;
+		if (d.ti1 > d.ti0) {                          // a word of several syllables becomes one token
+			if (lastK.end != null) k.end = lastK.end;
+			ln.tokens.splice(d.ti0 + 1, d.ti1 - d.ti0);
+		}
+	} else if (d.kind === 'miss') {
+		const nk = {text: d.want, t: null, end: null, glue: false}, prev = ln.tokens[d.ti0 - 1];
+		if (d.ti0 === ln.tokens.length && prev && prev.end != null) { nk.end = prev.end; prev.end = null; }  // line end moves along
+		ln.tokens.splice(d.ti0, 0, nk);
+	} else {
+		popEl(tokEls[d.li] && tokEls[d.li][d.ti0]);
+		const gone = ln.tokens.splice(d.ti0, d.ti1 - d.ti0 + 1), endK = gone[gone.length - 1];
+		if (endK.end != null && ln.tokens.length && d.ti0 === ln.tokens.length) ln.tokens[ln.tokens.length - 1].end = endK.end;
+		if (!ln.tokens.length) doc.lines.splice(d.li, 1);
+	}
+	if (!batch) {
+		const l2 = doc.lines[d.li];
+		sel = l2 && l2.tokens.length ? {li: d.li, ti: Math.min(d.ti0, l2.tokens.length - 1), end: false} : null;
+		changed();
+	}
+	return true;
+}
+
+$('btnRef').onclick = () => {
+	if (edit) { lockedHint(); return; }
+	$('refText').value = refRaw;
+	$('dlgRef').showModal();
+};
+$('refEdit').onclick = () => $('btnRef').onclick();
+$('refFile').onclick = () => $('refFileIn').click();
+$('refFileIn').onchange = async e => {
+	const f = e.target.files[0];
+	if (f) $('refText').value = LRC.decode(await f.arrayBuffer());
+	e.target.value = '';
+};
+$('dlgRef').addEventListener('close', () => {
+	if ($('dlgRef').returnValue !== 'ok') return;
+	refRaw = $('refText').value;
+	const lines = LRC.cleanLyrics(refRaw).filter(Boolean);
+	refLines = lines.length ? lines : null;
+	refSkip = new Set();
+	changed(false);
+	if (refLines) hint(refDiffs.length ? 'Abgleich: ' + $('refSum').textContent + ' – rechts in der Liste, im Text unterstrichen.' :
+		'Abgleich: alles wie im Original ✓');
+});
+$('refOff').onclick = () => { refLines = null; changed(false); };
+$('refAll').onclick = () => {
+	if (edit) { lockedHint(); return; }
+	const subs = refDiffs.filter(d => d.kind === 'sub').sort((a, b) => b.li - a.li || b.ti0 - a.ti0);
+	if (!subs.length) return;
+	pushUndo();
+	subs.forEach(d => applyRef(d, true));
+	changed();
+	hint(subs.length + ' Wörter getauscht (Strg+Z macht es rückgängig).');
+};
+$('refList').addEventListener('click', e => {
+	const row = e.target.closest('.rd');
+	if (!row) return;
+	const d = refDiffs[+row.dataset.i];
+	if (!d) return;
+	const act = e.target.closest('button[data-ract]');
+	if (act && act.dataset.ract === 'skip') { refSkip.add(d.key); changed(false); return; }
+	if (act) {
+		if (edit) { lockedHint(); return; }
+		applyRef(d);
+		return;
+	}
+	if (edit && d.li !== edit.li) { lockedHint(); return; }
+	const ln = doc.lines[d.li];
+	setSel({li: d.li, ti: Math.max(0, Math.min(d.ti0, ln.tokens.length - 1)), end: false});
+	showLine(d.li);
+	const t = selTime();
+	if (t != null && audio.paused) seek(Math.max(0, t - 0.05));
+});
+
+// ---------------------------------------------------------------- splitters: timeline height and side panel width
+// Drag the grip under the timeline or the bar left of the side panel; each size stays between min and max and is
+// kept in this browser. Double click = default size.
+
+const TL_H = {min: 150, def: 179, max: 520}, SIDE_W = {min: 230, def: 340, max: 680};
+const clampTo = (v, r) => Math.round(Math.max(r.min, Math.min(r.max, v)));
+
+function setTlH(h, keep = true) {
+	h = clampTo(Math.min(h, innerHeight * 0.6), TL_H);      // the word list keeps some room
+	LANE_Y = h - 42;
+	if (keep) try { localStorage.setItem('lrcEditorTlH', h); } catch (e) { /* ignore */ }
+}
+
+function setSideW(w, keep = true) {
+	w = clampTo(Math.min(w, innerWidth * 0.6), SIDE_W);
+	document.querySelector('aside').style.width = w + 'px';
+	if (keep) try { localStorage.setItem('lrcEditorSideW', w); } catch (e) { /* ignore */ }
+}
+
+function splitter(el, cur, set, axis) {
+	el.addEventListener('pointerdown', e => {
+		if (e.button !== 0) return;
+		e.preventDefault();
+		const p0 = axis === 'y' ? e.clientY : e.clientX, v0 = cur();
+		el.setPointerCapture(e.pointerId);
+		el.classList.add('drag');
+		document.body.classList.add('resizing', axis === 'y' ? 'rs-y' : 'rs-x');
+		const move = ev => set(v0 + (axis === 'y' ? ev.clientY - p0 : p0 - ev.clientX));   // side panel: left = wider
+		const up = () => {
+			el.removeEventListener('pointermove', move);
+			el.removeEventListener('pointerup', up);
+			el.removeEventListener('pointercancel', up);
+			el.classList.remove('drag');
+			document.body.classList.remove('resizing', 'rs-y', 'rs-x');
+		};
+		el.addEventListener('pointermove', move);
+		el.addEventListener('pointerup', up);
+		el.addEventListener('pointercancel', up);
+	});
+}
+
+splitter($('splitTl'), () => LANE_Y + 42, setTlH, 'y');
+splitter($('splitSide'), () => document.querySelector('aside').getBoundingClientRect().width, setSideW, 'x');
+$('splitTl').ondblclick = () => setTlH(TL_H.def);
+$('splitSide').ondblclick = () => { document.querySelector('aside').style.width = ''; try { localStorage.removeItem('lrcEditorSideW'); } catch (e) { /* ignore */ } };
+try {
+	const h = +localStorage.getItem('lrcEditorTlH'), w = +localStorage.getItem('lrcEditorSideW');
+	if (h) setTlH(h, false);
+	if (w) setSideW(w, false);
+} catch (e) { /* ignore */ }
 
 // ---------------------------------------------------------------- splash: Juicy and the start jingle
 // Browsers only let a page make sound after a click or key, so if the jingle is blocked the splash waits for one.

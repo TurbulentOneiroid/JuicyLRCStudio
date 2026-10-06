@@ -9,20 +9,30 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 
 ## Was es kann
 - Audio laden (mp3, wav, flac, m4a, ogg …), Tempo 100 / 75 / 50 / 25 % ohne Tonhöhenänderung, Sprachfilter für langsames Abspielen
-- Wörter mit der Maus setzen (Rechtsklick = anhören, Linksklick = setzen) oder mit der Leertaste mittippen
+- Wörter mit der Maus setzen (Rechtsklick = anhören, rechte Taste halten = weiterhören bis zum Loslassen, Linksklick = setzen) oder mit der Leertaste mittippen
 - **Loop-Modus** (↻ neben ▶): die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen; aus = ganzen Track hören
 - Zeile bearbeiten oder reparieren mit **Loop-Box** (Vorlauf einstellbar, die Wiedergabe bleibt in der Box)
 - Wörter in der Zeitleiste ziehen (Box = verschieben, Kanten = länger / kürzer) und ganze Zeilen an ihrer Box verschieben,
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, so sitzt jede Grenze genau
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
-- **📁 Ordner:** zeigt, welches Audio zu welcher LRC gehört, und legt fehlende LRCs direkt im Ordner an
+- Seitenleiste rechts (auch im schmalen Fenster), die Song-Felder lassen sich mit ▾ einklappen; Zeitleiste (Griff darunter)
+  und Seitenleiste (Leiste links davon) lassen sich in der Größe ziehen, Doppelklick = Standard
+- **📁 Ordner** (Button oder Ordner ins Fenster ziehen): zeigt, welches Audio zu welcher LRC gehört, und legt fehlende LRCs direkt im Ordner an;
+  mit ◀ ▶ oder der Liste durch die Songs blättern (rundherum), vorher fragt es nach Speichern / Verwerfen
 - Rückgängig, Entwurf-Wiederherstellung, Speichern direkt in die Datei (Chrome / Edge)
 - Startbildschirm mit Juicy und Jingle (unter ⚙ *Start-Sound* abschaltbar). Browser spielen Ton erst nach einem Klick,
   darum wartet der Startbildschirm notfalls auf *Studio öffnen*
-- Gelöschte Wörter, Zeilen und Zeiten zerplatzen in aufsteigende Seifenblasen (unter ⚙ *Blasen beim Löschen* abschaltbar)
+- Gelöschte Wörter, Zeilen und Zeiten zerplatzen mit einem Blub in aufsteigende Seifenblasen (unter ⚙ abschaltbar)
+- **✂ Klinge (X):** wie im Schnittprogramm in die Zeitleiste klicken, die Zeile wird dort in zwei geteilt (links endet sie
+  am Schnitt, rechts beginnt sie mit dem nächsten Wort)
+- **Original vergleichen:** Original-Songtext einfügen, falsche, fehlende und überzählige Wörter werden markiert, mit
+  Vorschlag pro Wort (Tauschen / Einfügen / Löschen). `[Chorus]` usw. und Werbung von Lyrics-Seiten zählen nicht,
+  Wiederholungen und Remix-Schnitte sind kein Fehler. *Neu aus Text* lässt diese Überschriften ebenfalls weg
+- **🎉 Fertig:** fragt einmal nach deinem Namen, trägt ihn als `[by:]` und `[status:Fertig]` in die LRC ein, speichert –
+  und feiert mit Konfetti, Blasen und Musik
 
-Alle Tasten stehen im Programm unter **?**.
+Unter **?** gibt es einen Rundgang durch die Bereiche (Maus auf einen Eintrag = der Bereich leuchtet auf) und alle Tasten.
 
 ## Dateien
 | Datei | Inhalt |
@@ -33,6 +43,8 @@ Alle Tasten stehen im Programm unter **?**.
 | `style.css` | Aussehen |
 | `assets/juicy.png` | Maskottchen (Logo, Favicon, Startbildschirm) |
 | `assets/jingle.wav` | Start-Jingle |
+| `assets/party.wav` | Musik zur Party nach 🎉 Fertig |
+| `assets/blub.wav` | Blub beim Löschen |
 
 ## Lizenz
 MIT, siehe [LICENSE](LICENSE).

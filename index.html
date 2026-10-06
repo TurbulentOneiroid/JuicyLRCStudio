@@ -34,28 +34,38 @@
 		<span class="sep"></span>
 		<button id="btnSave" class="primary" title="Speichern (Strg+S)">Speichern</button>
 		<button id="btnSaveAs">Speichern unter</button>
+		<button id="btnDone" class="done" title="Fertig: trägt deinen Namen und „Fertig“ in die LRC ein und speichert – mit Party">🎉 Fertig</button>
 		<button id="btnReset" title="Auf den geladenen Stand zurück oder alle Wortzeiten löschen">Zurücksetzen</button>
 		<input type="file" id="fileAudio" accept="audio/*,.mp3,.wav,.flac,.m4a,.aif,.aiff,.ogg" hidden>
 		<input type="file" id="fileLrc" accept=".lrc,.txt,text/plain" hidden>
 		<input type="file" id="fileFolder" webkitdirectory multiple hidden>
+		<span id="songNav" class="songnav" hidden>
+			<span class="sep"></span>
+			<button id="songPrev" class="icon" title="Song davor im Ordner (am Anfang geht es hinten weiter)">◀</button>
+			<select id="songSel" title="Song im Ordner wählen"></select>
+			<button id="songNext" class="icon" title="Nächster Song im Ordner (am Ende geht es vorne weiter)">▶</button>
+		</span>
 	</div>
-	<div class="group tools">
-		<button id="btnUndo" class="icon" title="Rückgängig (Strg+Z)">↶</button>
-		<button id="btnRedo" class="icon" title="Wiederholen (Strg+Y)">↷</button>
-		<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
-		<button id="btnHelp" class="icon" title="Tasten und Hilfe">?</button>
-	</div>
-	<div class="group transport">
-		<button id="btnPlay" class="wide" title="Abspielen / Pause (Leertaste, P)">▶</button>
-		<button id="btnLoopMode" class="icon on" title="Loop-Modus: die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen. Aus = ganzen Track hören">↻</button>
-		<span id="clock">00:00.00 / 00:00.00</span>
-		<div class="seg" title="Tempo (1 / 2 / 3 / 4)">
-			<button class="speed" data-rate="1">100 %</button>
-			<button class="speed" data-rate="0.75">75 %</button>
-			<button class="speed" data-rate="0.5">50 %</button>
-			<button class="speed" data-rate="0.25">25 %</button>
+	<div class="bar">
+		<span></span>
+		<div class="group transport">
+			<button id="btnPlay" class="wide" title="Abspielen / Pause (Leertaste, P)">▶</button>
+			<button id="btnLoopMode" class="icon on" title="Loop-Modus: die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen. Aus = ganzen Track hören">↻</button>
+			<span id="clock">00:00.00 / 00:00.00</span>
+			<div class="seg" title="Tempo (1 / 2 / 3 / 4)">
+				<button class="speed" data-rate="1">100 %</button>
+				<button class="speed" data-rate="0.75">75 %</button>
+				<button class="speed" data-rate="0.5">50 %</button>
+				<button class="speed" data-rate="0.25">25 %</button>
+			</div>
+			<label title="Zeitleiste folgt der Wiedergabe"><input id="follow" type="checkbox" checked> Folgen</label>
 		</div>
-		<label title="Zeitleiste folgt der Wiedergabe"><input id="follow" type="checkbox" checked> Folgen</label>
+		<div class="group tools">
+			<button id="btnUndo" class="icon" title="Rückgängig (Strg+Z)">↶</button>
+			<button id="btnRedo" class="icon" title="Wiederholen (Strg+Y)">↷</button>
+			<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
+			<button id="btnHelp" class="icon" title="Rundgang durch die Bereiche, Tasten und Hilfe">?</button>
+		</div>
 	</div>
 	<div id="fileInfo"></div>
 </header>
@@ -88,7 +98,8 @@
 			<span><input id="endGap" type="number" value="0.5" step="0.1" min="0"> s</span></label>
 		<h4>Studio</h4>
 		<label title="Beim Öffnen den Juicy-Jingle spielen"><input id="jingleOn" type="checkbox" checked> Start-Sound</label>
-		<label title="Gelöschte Wörter, Zeilen und Zeiten zerplatzen in aufsteigende Seifenblasen"><input id="bubblesOn" type="checkbox" checked> Blasen beim Löschen</label>
+		<label title="Gelöschte Wörter, Zeilen und Zeiten zerplatzen mit einem Blub in aufsteigende Seifenblasen"><input id="bubblesOn" type="checkbox" checked> Blasen und Blub beim Löschen</label>
+		<label title="Kommt bei 🎉 Fertig in die LRC (Erstellt von)">Dein Name <input id="myName" placeholder="wird bei Fertig gefragt"></label>
 	</div>
 </div>
 
@@ -99,8 +110,18 @@
 
 <section id="stage">
 	<div id="preview"><div id="pvCur"></div><div id="pvNext"></div></div>
+	<div id="legend" aria-label="Maus und Tasten in der Zeitleiste">
+		<span><kbd>🖱 Links</kbd> markieren</span>
+		<span><kbd>Box ziehen</kbd> verschieben</span>
+		<span><kbd>Kante ziehen</kbd> länger / kürzer</span>
+		<span><kbd>🖱 Rechts</kbd> anspielen, halten = weiterhören</span>
+		<span><kbd>Rad</kbd> Zoom · <kbd>Shift</kbd>+Rad blättern</span>
+		<span><kbd>Leertaste</kbd> Play / Stop</span>
+		<span><kbd>X</kbd> ✂ Klinge: Klick teilt die Zeile</span>
+	</div>
 	<canvas id="overview" height="34"></canvas>
 	<canvas id="timeline" height="179"></canvas>
+	<div id="splitTl" class="split h" title="Ziehen: Zeitleiste höher / flacher · Doppelklick: Standardhöhe"></div>
 	<div id="modeBar"><span id="modeText"></span>
 		<button id="btnEdit" title="Markierte Zeile öffnen, um ihre Zeiten zu ändern (B oder Doppelklick auf ihre Box)">✎ Zeile bearbeiten</button>
 		<button id="btnOk" title="Zeile übernehmen und zur nächsten Zeile mit Fehlern (Enter)" hidden>✓ OK</button>
@@ -116,6 +137,7 @@
 			<button id="btnLoop" title="Markierte Zeile im Loop abspielen, mit kurzem Vor- und Nachlauf (L)">↻ Zeile loopen</button>
 			<button id="btnNext" title="Zur nächsten Zeile mit Fehlern oder ungesetzten Wörtern (N, Shift+N zurück)">Nächster Fehler ⏭</button>
 			<button id="btnVoice" title="Stimme der ausgewählten Zeilen setzen (V): v1, v2 … / M, F, D / bg = Hintergrund">Stimme</button>
+			<button id="btnSplit" title="Klinge an / aus (X): Klick in die Zeitleiste teilt die Zeile genau dort in zwei – wie einen Clip im Schnittprogramm">✂ Teilen</button>
 			<button id="btnRepair" title="Ausgewählte Zeilen neu tippen (R). Zeilen auswählen: Zeilennummer anklicken, Shift = Bereich, Strg = einzeln dazu">Reparieren</button>
 			<span id="hint"></span>
 		</div>
@@ -125,22 +147,63 @@
 			<button id="rawApply">Übernehmen</button>
 		</div>
 	</section>
+	<div id="splitSide" class="split v" title="Ziehen: Seitenleiste breiter / schmaler · Doppelklick: Standardbreite"></div>
 	<aside>
-		<h3>Song</h3>
+		<h3><button id="metaFold" class="fold" title="Song-Felder ein- / ausklappen"><span class="arr">▾</span> Song <span id="metaSum"></span></button></h3>
 		<div id="meta">
 			<label>Titel <input data-key="ti"></label>
 			<label>Artist <input data-key="ar"></label>
 			<label>Album <input data-key="al"></label>
 			<label>Erstellt von <input data-key="by"></label>
+			<label>Status <input data-key="status" placeholder="– (🎉 Fertig setzt „Fertig“)"></label>
 			<label>Offset (ms) <input data-key="offset"></label>
 		</div>
 		<h3>Prüfung <span id="sum"></span></h3>
 		<div class="fixes">
 			<button id="fixSame" title="Wörter mit gleicher Zeit gleichmäßig bis zum nächsten Wort verteilen">Gleiche Zeiten verteilen</button>
 			<button id="fixEnds" title="Fehlende Zeilenenden ungefähr setzen (danach nachhören!)">Fehlende Enden schätzen</button>
+			<button id="btnRef" title="Original-Songtext einfügen: falsche, fehlende und überzählige Wörter werden markiert, mit Vorschlag">Original vergleichen</button>
 		</div>
 		<div id="issues"></div>
+		<div id="refBox" hidden>
+			<h3>Original-Abgleich <span id="refSum"></span></h3>
+			<div class="fixes">
+				<button id="refAll" title="Alle Wort-Vorschläge (Tauschen) auf einmal übernehmen">Alle tauschen</button>
+				<button id="refEdit">Original ändern</button>
+				<button id="refOff" title="Abgleich beenden">Aus</button>
+			</div>
+			<div id="refList"></div>
+		</div>
 		<div id="help" hidden>
+			<h3>Rundgang: die Bereiche</h3>
+			<p class="tour-tip">Zeig mit der Maus auf einen Eintrag, dann leuchtet der Bereich im Studio auf.</p>
+			<ol id="tour">
+				<li data-area="header .files"><b>Dateien</b> (ganz oben): 📁 Ordner, ♪ Audio und LRC laden oder <i>Neu aus Text</i>,
+					dann Speichern und am Schluss 🎉 Fertig. Mit einem Ordner kommen ◀ ▶ dazu, um durch die Songs zu blättern.</li>
+				<li data-area="header .transport"><b>Wiedergabe</b>: ▶ Play, ↻ Loop-Modus, Zeit, Tempo 100 – 25 % und <i>Folgen</i>.
+					Rechts daneben ↶ ↷, ⚙ Einstellungen und diese Hilfe.</li>
+				<li data-area="#preview"><b>Vorschau</b>: die aktuelle und die nächste Zeile wie später im Player, gesungene Wörter färben sich.</li>
+				<li data-area="#overview"><b>Übersicht</b>: der ganze Song auf einen Blick. Klick springt dorthin, der Rahmen ist der Ausschnitt der Zeitleiste.</li>
+				<li data-area="#timeline"><b>Zeitleiste</b>: oben die Wörter mit Zeit, dahinter die Wellenform, darunter die Wort-Balken und
+					unten je Zeile eine Box. Mausrad = Zoom, rechte Taste = anhören (halten = weiterhören), Boxen und Kanten ziehen = verschieben,
+					X = ✂ Klinge.</li>
+				<li data-area="#splitTl"><b>Griff unter der Zeitleiste</b>: ziehen = Zeitleiste höher oder flacher, Doppelklick = Standard.</li>
+				<li data-area="#modeBar"><b>Modusleiste</b>: <i>Ansehen</i> (es ändert sich nichts) oder <i>Bearbeiten</i> einer Zeile –
+					mit ✎ Zeile bearbeiten, ✓ OK und ✕ Abbrechen.</li>
+				<li data-area="#editor"><b>Wörter</b>: alle Zeilen mit ihren Wörtern und Zeiten. Klick markiert, Doppelklick ändert ein Wort,
+					die Knöpfe darüber loopen, springen zum nächsten Fehler, setzen die Stimme, teilen und reparieren.
+					<i>Text (LRC)</i> zeigt die Datei als Text.</li>
+				<li data-area="#splitSide"><b>Leiste dazwischen</b>: ziehen = Seitenleiste breiter oder schmaler, Doppelklick = Standard.</li>
+				<li data-area="aside"><b>Seitenleiste</b>: Song-Felder (mit ▾ einklappbar), Prüfung mit Reparatur-Knöpfen,
+					Original-Abgleich und diese Hilfe.</li>
+			</ol>
+			<h3>So geht’s meistens</h3>
+			<ol class="steps-help">
+				<li>Audio und Text laden (oder einen Ordner).</li>
+				<li>Zeile markieren, <b>B</b> = bearbeiten, mit rechts anhören und links die Wörter setzen – oder mit der Leertaste mittippen.</li>
+				<li>Rechts die Prüfung und <i>Original vergleichen</i> abarbeiten (<b>N</b> = nächster Fehler).</li>
+				<li>Speichern, und wenn alles sitzt: 🎉 Fertig.</li>
+			</ol>
 			<h3>Tasten</h3>
 			<table>
 				<tr><td>B</td><td><b>Zeile bearbeiten</b>: öffnet die markierte Zeile (auch Doppelklick auf ihre Box). Nur dann ändern sich Zeiten, und nur in dieser Zeile. <b>Enter</b> = OK (übernehmen, weiter zur nächsten Zeile mit Fehlern), <b>Esc</b> = Abbrechen (Zeile wie vorher)</td></tr>
@@ -148,10 +211,12 @@
 				<tr><td>Loop-Box</td><td>beim Bearbeiten und Reparieren: von <i>Vorlauf</i> vor der Zeile bis zum Anfang der nächsten Zeile. Linke Kante ziehen = Vorlauf, rechte Kante = Ende</td></tr>
 				<tr><td>Wort ziehen</td><td>in der Zeitleiste die Wort-Box (Balken unter dem Wort) anfassen = ganzes Wort verschieben, es behält seine Länge und schiebt das nächste Wort vor sich her. Linke oder rechte Kante ziehen = Wort nach links / rechts länger oder kürzer. Dabei spielt der Anfang des Wortes kurz an (wie Rechtsklick), sobald die Maus kurz still steht und beim Loslassen. Gilt sofort, ohne OK</td></tr>
 				<tr><td>Zeile ziehen</td><td>die Zeilen-Box ganz unten anfassen und nach links / rechts ziehen = die ganze Zeile mit allen Wörtern verschieben (bis an die Zeile davor / danach). Dabei spielt ihr Anfang kurz an. Gilt sofort, ohne OK. Klick ohne Ziehen = Zeile markieren</td></tr>
-				<tr><td>Rechtsklick</td><td>in der Zeitleiste: ab dort kurz anspielen (Länge oben bei <i>Anspielen</i>). Beim Bearbeiten hängt das markierte Wort an der Maus, <b>Linksklick</b> setzt es und das nächste der Zeile hängt dran. Nach dem letzten Wort kommt das Zeilenende (⏹), dann läuft die Zeile im Loop</td></tr>
+				<tr><td>Rechtsklick</td><td>in der Zeitleiste: ab dort kurz anspielen (Länge oben bei <i>Anspielen</i>). <b>Gedrückt halten</b> = der Song spielt weiter, bis du loslässt (auch über einen Loop hinaus), dann springt er zurück zum Startpunkt. Beim Bearbeiten hängt das markierte Wort an der Maus, <b>Linksklick</b> setzt es und das nächste der Zeile hängt dran. Nach dem letzten Wort kommt das Zeilenende (⏹), dann läuft die Zeile im Loop</td></tr>
 				<tr><td>Strg+Klick</td><td>beim Bearbeiten: in der Zeitleiste nur dorthin springen, statt zu setzen</td></tr>
 				<tr><td>↻ (neben ▶)</td><td>Loop-Modus, an = die markierte Zeile läuft immer im Loop; wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Track läuft durch</td></tr>
 				<tr><td>L</td><td>markierte Zeile im Loop abspielen, mit Vor- und Nachlauf (oben <i>Loop ±</i>). Läuft auch von selbst, sobald du das Zeilenende gesetzt hast</td></tr>
+				<tr><td>X / ✂</td><td>Klinge an / aus (wie im Schnittprogramm): Klick in die Zeitleiste teilt die Zeile dort in zwei Boxen. Liegt der Schnitt in einem Wort, endet die linke Zeile am Schnitt und die rechte beginnt mit dem nächsten Wort. Esc = Klinge aus, Strg+Z = zurück</td></tr>
+				<tr><td>Original</td><td><i>Original vergleichen</i> (rechts bei Prüfung): Original-Songtext einfügen. Falsche, fehlende und überzählige Wörter werden unterstrichen und rechts mit Vorschlag gelistet (Tauschen / Einfügen / Löschen). <code>[Chorus]</code> usw. zählen nicht, Wörter in <code>( )</code> sind optional, Wiederholungen und Remix-Schnitte sind kein Fehler</td></tr>
 				<tr><td>N / Shift+N</td><td>nächste / vorige Zeile mit Fehlern oder ungesetzten Wörtern: ihr erstes Problem wird markiert</td></tr>
 				<tr><td>T</td><td><i>Leertaste tippt</i> an / aus. An: läuft das Lied, setzt die Leertaste das markierte Wort. Beim letzten Wort einer Zeile <b>gedrückt halten</b>, bis es zu Ende gesungen ist: Loslassen setzt das Zeilenende. Nicht bei offener Zeile</td></tr>
 				<tr><td>E</td><td>Ende des zuletzt gesetzten Worts jetzt setzen (Zeilenende oder Pause)</td></tr>
@@ -174,7 +239,7 @@
 				Klick auf eine Box markiert die Zeile, Doppelklick öffnet sie. Beim Bearbeiten ist der Arbeitsbereich hellblau unterlegt: vom Zeilenanfang bis zum Wort, das du gerade setzt.
 				Marken der geöffneten Zeile ziehen = verschieben, sonst Klick = dorthin springen, Mausrad = Zoom, Shift+Mausrad oder Ziehen im Leeren = blättern. Audio und LRC lassen sich auch ins Fenster ziehen.</p>
 			<p>Ende (⏹ Ende) = wo die letzte Silbe der Zeile aufhört. Fehlt es und die nächste Zeile ist weit weg, zeigt die Zeitleiste einen Vorschlag (gestrichelt, <i>Ende?</i>). OK beim Bearbeiten übernimmt ihn, ziehen verschiebt ihn.</p>
-			<p>📁 Ordner: zeigt alle Songs im Ordner (auch Unterordner), welches Audio zu welcher LRC gehört und wo eine fehlt. <i>LRC erstellen</i> legt sie beim Speichern direkt im Ordner an.</p>
+			<p>📁 Ordner (oder Ordner ins Fenster ziehen): zeigt alle Songs im Ordner und allen Unterordnern, welches Audio zu welcher LRC gehört und wo eine fehlt. Gepaart wird nach Namen (Groß-/Kleinschreibung, Satzzeichen und „_enhanced“ egal); passt es nur ungefähr – z. B. „Artist - Titel (Extended Mix).wav“ und „Titel.lrc“ in einem anderen Unterordner – steht ≈ davor. <i>LRC erstellen</i> legt sie beim Speichern direkt im Ordner an. Danach blätterst du oben mit ◀ ▶ oder der Liste durch die Songs (am Ende geht es vorne weiter); ungespeicherte Änderungen fragt es vorher ab.</p>
 			<p>Speichern: Die LRC muss heißen wie das Audio (ohne Endung), sonst findet der Player sie nicht. Der Editor schlägt den Namen vor.</p>
 		</div>
 	</aside>
@@ -184,7 +249,8 @@
 	<form method="dialog">
 		<h3>Neue LRC aus Songtext</h3>
 		<p>Songtext einfügen, eine Zeile pro Bildschirmzeile. Silben bei Bedarf mit <code>|</code> trennen
-			(<code>Lie|be</code>), dann tippst du sie einzeln.</p>
+			(<code>Lie|be</code>), dann tippst du sie einzeln. <code>[Chorus]</code>, <code>[Verse 1]</code> usw. und Werbung
+			von Lyrics-Seiten fallen weg.</p>
 		<div class="row">
 			<label>Titel <input id="newTi"></label>
 			<label>Artist <input id="newAr"></label>
@@ -197,14 +263,55 @@
 	</form>
 </dialog>
 
+<dialog id="dlgRef">
+	<form method="dialog">
+		<h3>Mit dem Original-Songtext vergleichen</h3>
+		<p>Original-Text einfügen, z. B. von einer Lyrics-Seite. <code>[Verse 1]</code>, <code>[Chorus]</code> usw. und
+			eingestreute Werbung („You might also like …“) werden ignoriert, Wörter in <code>( )</code> gelten als optional.
+			Wiederholungen und Schnitte im Remix sind kein Fehler.</p>
+		<textarea id="refText" rows="16" spellcheck="false"></textarea>
+		<input type="file" id="refFileIn" accept=".txt,.lrc,text/plain" hidden>
+		<div class="row end">
+			<button type="button" id="refFile">Textdatei laden …</button>
+			<button value="cancel">Abbrechen</button>
+			<button value="ok">Vergleichen</button>
+		</div>
+	</form>
+</dialog>
+
 <dialog id="dlgFolder">
 	<form method="dialog">
 		<h3>Ordner: <span id="folderName"></span></h3>
+		<p id="folderOk" class="folder-ok"></p>
 		<p id="folderSum"></p>
 		<div id="folderList"></div>
 		<div class="row end">
 			<button type="button" id="folderOther">Anderer Ordner …</button>
-			<button value="close">Schließen</button>
+			<button value="close">Fertig – schließen</button>
+		</div>
+	</form>
+</dialog>
+
+<dialog id="dlgSave">
+	<form method="dialog">
+		<h3>Ungespeicherte Änderungen</h3>
+		<p>„<span id="saveName"></span>“ wurde geändert. Vorher speichern?</p>
+		<div class="row end">
+			<button value="cancel">Abbrechen</button>
+			<button value="drop">Verwerfen</button>
+			<button value="save">Speichern</button>
+		</div>
+	</form>
+</dialog>
+
+<dialog id="dlgName">
+	<form method="dialog">
+		<h3>🎉 Fast geschafft!</h3>
+		<p>Wie heißt du? Dein Name kommt als „Erstellt von“ in die LRC (nur einmal gefragt, ändern unter ⚙).</p>
+		<div class="row"><label>Name <input id="nameIn" autocomplete="nickname"></label></div>
+		<div class="row end">
+			<button value="cancel">Abbrechen</button>
+			<button value="ok">Fertig</button>
 		</div>
 	</form>
 </dialog>

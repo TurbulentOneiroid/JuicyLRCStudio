@@ -162,9 +162,38 @@ header {
 .brand b { font-weight: 800; }
 
 header .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-header .tools { margin-left: auto; }
-header .transport { flex-basis: 100%; justify-content: center; }
+/* second row: transport centred, ↶ ↷ ⚙ ? on the right of the same row */
+header .bar { flex-basis: 100%; display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+header .transport { justify-content: center; }
+header .tools { justify-self: end; }
 header .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
+header .songnav { display: flex; gap: 6px; align-items: center; }
+header .songnav[hidden] { display: none; }
+#songSel {
+	height: 32px; max-width: 260px; padding: 0 8px; font: inherit; color: inherit; cursor: pointer;
+	background: var(--field); border: 1px solid var(--line); border-radius: 9px;
+}
+#songSel option { background: var(--bg-raise); color: var(--text); }
+button.done { border-color: var(--ok); color: var(--ok); font-weight: 600; }
+button.done:hover { background: var(--ok); color: var(--ink); }
+
+/* ---------------------------------------------------------------- party after 🎉 Fertig */
+.party {
+	position: fixed; inset: 0; z-index: 89; display: grid; place-items: center; cursor: pointer;   /* under #fx: bubbles fly over it */
+	background: radial-gradient(circle at 50% 45%, rgba(155, 123, 255, 0.25), rgba(5, 5, 9, 0.55) 60%);
+	animation: rise 0.3s ease-out;
+}
+.party.out { opacity: 0; transition: opacity 0.5s; }
+.party-card {
+	text-align: center; padding: 28px 40px; border-radius: 22px; max-width: min(520px, calc(100vw - 32px));
+	background: var(--bg-raise); border: 1px solid var(--line-hi); box-shadow: 0 20px 80px rgba(0, 0, 0, 0.6);
+	animation: party-in 0.7s cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.party-card h2 { margin: 6px 0 8px; font: 700 32px var(--font-display); color: var(--text-hi); }
+.party-card p { margin: 0; color: var(--dim); }
+.party-emoji { font-size: 64px; animation: party-wiggle 0.6s ease-in-out infinite alternate; }
+@keyframes party-in { from { opacity: 0; transform: scale(0.4) rotate(-8deg); } to { opacity: 1; transform: none; } }
+@keyframes party-wiggle { from { transform: rotate(-12deg) scale(1); } to { transform: rotate(12deg) scale(1.12); } }
 header label { display: flex; gap: 6px; align-items: center; color: var(--dim); font-size: 13px; }
 .label { color: var(--dim); margin-left: 6px; }
 
@@ -282,7 +311,6 @@ canvas {
 	display: flex;
 	gap: 8px;
 	align-items: center;
-	margin-top: 8px;
 	padding: 6px 8px 6px 14px;
 	border-radius: 12px;
 	background: var(--panel);
@@ -299,12 +327,23 @@ canvas {
 #btnOk { background: var(--ok); color: var(--ink); border-color: transparent; font-weight: 600; }
 body.editing #timeline { box-shadow: 0 0 0 2px var(--cursor), 0 0 30px -6px rgba(79, 209, 255, 0.5); }
 
+/* splitters: grip under the timeline (height), bar left of the side panel (width); double click = default */
+.split { flex: none; position: relative; touch-action: none; user-select: none; }
+.split::after { content: ''; position: absolute; border-radius: 3px; background: var(--line-hi); transition: background 0.15s; }
+.split:hover::after, .split.drag::after { background: var(--cursor); }
+.split.h { height: 10px; cursor: row-resize; }
+.split.h::after { left: calc(50% - 28px); width: 56px; top: 3px; height: 4px; }
+.split.v { width: 14px; cursor: col-resize; }
+.split.v::after { top: calc(50% - 28px); height: 56px; left: 5px; width: 4px; }
+body.resizing, body.resizing * { user-select: none; }
+body.rs-y, body.rs-y * { cursor: row-resize !important; }
+body.rs-x, body.rs-x * { cursor: col-resize !important; }
+
 /* ---------------------------------------------------------------- main: word list + side panel */
 main {
 	flex: 1;
 	min-height: 0;
 	display: flex;
-	gap: 14px;
 	padding: 12px 16px 16px;
 }
 
@@ -440,6 +479,41 @@ aside {
 aside h3 { margin: 14px 0 8px; font: 600 11px var(--font); text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }
 #sum { font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text); margin-left: 4px; }
 #meta { display: grid; gap: 6px; }
+#meta[hidden] { display: none; }
+/* Song heading as a fold button: ▾ open, ▸ folded with artist – title · status next to it */
+aside h3 .fold {
+	height: auto;
+	padding: 2px 4px 2px 0;
+	margin-left: -2px;
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	background: none;
+	border: 0;
+	font: inherit;
+	letter-spacing: inherit;
+	text-transform: inherit;
+	color: inherit;
+	text-align: left;
+}
+aside h3 .fold:hover { color: var(--text-hi); background: none; }
+aside h3 .fold:active { transform: none; }
+.fold .arr { display: inline-block; width: 14px; font-size: 15px; line-height: 1; color: var(--text); transition: transform 0.15s; }
+.fold.closed .arr { transform: rotate(-90deg); }
+#metaSum {
+	display: none;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-weight: 500;
+	text-transform: none;
+	letter-spacing: 0;
+	color: var(--text);
+}
+.fold.closed #metaSum { display: block; }
 #meta label { display: grid; grid-template-columns: 92px 1fr; align-items: center; color: var(--dim); font-size: 13px; }
 #meta input { min-width: 0; }
 .fixes { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
@@ -460,8 +534,39 @@ aside h3 { margin: 14px 0 8px; font: 600 11px var(--font); text-transform: upper
 .issue.err { border-color: var(--err); }
 .issue.warn { border-color: var(--warn); }
 .issue b { font-weight: 600; }
+.issue.rd { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; border-color: #ff4f9a; }
+.issue.rd.miss { border-color: var(--cursor); }
+.issue.rd.extra { border-color: var(--warn); }
+.issue.rd.nomatch { border-color: var(--dim); color: var(--dim); }
+.issue.rd button { font-size: 11.5px; padding: 2px 8px; }
+.issue.rd .skip { margin-left: auto; background: none; border-color: transparent; color: var(--dim); }
+
+/* differences to the original lyrics in the word list: wrong word pink, extra word struck out, + where one is missing */
+.tok.rd-sub { border-color: #ff4f9a; background: rgba(255, 79, 154, 0.14); }
+.tok.rd-sub .w { color: #ff9ccb; }
+.tok.rd-extra { border-color: var(--warn); border-style: dashed; }
+.tok.rd-extra .w { text-decoration: line-through var(--warn) 2px; }
+.tok.rd-miss, .tok.rd-miss-after { position: relative; }
+.tok.rd-miss::before, .tok.rd-miss-after::after {
+	position: absolute; top: -7px; width: 16px; height: 16px; border-radius: 50%;
+	content: '+'; font: 700 12px/16px var(--font); text-align: center; color: var(--ink); background: var(--cursor);
+}
+.tok.rd-miss::before { left: -10px; }
+.tok.rd-miss-after::after { right: -10px; }
+
+/* what the mouse and a few keys do in the timeline */
+#legend { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 2px 4px 6px; font-size: 11.5px; color: var(--dim); }
+#legend kbd { font: 600 10.5px var(--font); color: var(--text); background: var(--field); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; margin-right: 3px; }
 
 #help table { border-collapse: collapse; font-size: 12px; }
+.tour-tip { margin: 0 0 6px; font-size: 12px; color: var(--dim); }
+#tour, .steps-help { margin: 0 0 6px; padding-left: 20px; font-size: 12.5px; }
+#tour li, .steps-help li { padding: 4px 4px 5px; }
+#tour li { border-radius: 8px; cursor: help; transition: background 0.15s; }
+#tour li:hover { background: rgba(79, 209, 255, 0.08); }
+#tour li::marker, .steps-help li::marker { color: var(--accent); font-weight: 700; }
+/* area of the tour entry under the mouse */
+.tour-hl { outline: 2px solid var(--cursor) !important; outline-offset: 3px; box-shadow: 0 0 0 6px rgba(79, 209, 255, 0.15), 0 0 40px -6px rgba(79, 209, 255, 0.6) !important; border-radius: 12px; }
 #help td { padding: 5px 4px; vertical-align: top; border-top: 1px solid var(--line); }
 #help td:first-child { white-space: nowrap; font-weight: 600; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 #help p { font-size: 12px; color: var(--dim); }
@@ -491,6 +596,9 @@ dialog .row.end button:last-child { background: var(--grad); color: #fff; border
 
 #dlgFolder { width: min(900px, 94vw); }
 #folderList { max-height: 60vh; overflow: auto; margin: 8px 0; }
+.folder-ok { margin: 4px 0 6px; padding: 10px 12px; border-radius: 10px; color: var(--text) !important; background: color-mix(in srgb, var(--ok) 14%, transparent); border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent); }
+.folder-ok b { color: var(--ok); }
+.folder-ok.none { background: color-mix(in srgb, var(--warn) 14%, transparent); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
 .frow { display: grid; grid-template-columns: 90px 1fr 1fr auto; gap: 10px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line); border-radius: 8px; }
 .frow:hover { background: rgba(255, 255, 255, 0.04); }
 .frow .fn { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -631,10 +739,18 @@ body.drop::after {
 	*, *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* ---------------------------------------------------------------- narrow windows: side panel goes under the word list */
+/* ---------------------------------------------------------------- narrow windows: the side panel stays on the right,
+   narrower; only on very narrow ones it goes under the word list */
 @media (max-width: 1000px) {
 	body { height: auto; min-height: 100vh; overflow: auto; }
-	main { flex-direction: column; }
+	main { flex: none; height: 88vh; }
+	aside { width: 270px; }
+	header .bar { display: flex; flex-wrap: wrap; justify-content: center; }
+	header .bar > span:first-child { display: none; }
+}
+@media (max-width: 680px) {
+	main { height: auto; flex-direction: column; gap: 14px; }
 	#words { min-height: 50vh; }
-	aside { width: auto; }
+	aside { width: auto !important; }
+	.split.v { display: none; }
 }
