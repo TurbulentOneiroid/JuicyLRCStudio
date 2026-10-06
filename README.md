@@ -2,8 +2,12 @@
 
 <img src="assets/juicy.png" alt="Juicy" width="160" align="right">
 
-Ein LRC-Editor im Browser: Songtexte Wort für Wort und Silbe für Silbe auf das Audio legen (Enhanced LRC / A2 mit `<mm:ss.xx>`-Wortzeiten).
+Ein **kostenloser LRC-Editor** im Browser: Songtexte Wort für Wort und Silbe für Silbe auf das Audio legen (Enhanced LRC / A2 mit `<mm:ss.xx>`-Wortzeiten).
 Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verlassen deinen Rechner nicht.
+**Free to use**, ohne Anmeldung, ohne Installation, Open Source (MIT).
+
+`#LRC-Editor` `#LRC-Maker` `#LRC-Generator` `#free-LRC-tool` `#free-to-use` `#kostenlos` `#synced-lyrics` `#enhanced-LRC`
+`#Songtext-synchronisieren` `#lyrics-editor` `#open-source`
 
 **Online:** https://turbulentoneiroid.github.io/JuicyLRCStudio/ · **Offline:** `index.html` per Doppelklick öffnen (Chrome oder Edge empfohlen).
 
@@ -16,8 +20,11 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, so sitzt jede Grenze genau
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
-- Seitenleiste rechts (auch im schmalen Fenster), die Song-Felder lassen sich mit ▾ einklappen; Zeitleiste (Griff darunter)
-  und Seitenleiste (Leiste links davon) lassen sich in der Größe ziehen, Doppelklick = Standard
+- Seitenleiste (Song, Prüfung, Original-Abgleich) neben den Wörtern: mit ⇆ links oder rechts
+  andocken, mit » zu einem schmalen Streifen einklappen, der nur noch die Fehler zählt und zeigt, wo im Song sie liegen
+- Liedtext-Anzeige, Zeitleiste (Griff darunter) und Seitenleiste lassen sich in der Größe ziehen, Doppelklick = Standard;
+  ganz klein zeigt die Liedtext-Anzeige nur noch die aktuelle Zeile. Die Song-Felder lassen sich mit ▾ einklappen
+- Prüf-Werkzeuge (Zeiten verteilen, Enden schätzen, Original vergleichen) oben links neben ▶
 - **📁 Ordner** (Button oder Ordner ins Fenster ziehen): zeigt, welches Audio zu welcher LRC gehört, und legt fehlende LRCs direkt im Ordner an;
   mit ◀ ▶ oder der Liste durch die Songs blättern (rundherum), vorher fragt es nach Speichern / Verwerfen
 - Rückgängig, Entwurf-Wiederherstellung, Speichern direkt in die Datei (Chrome / Edge)
@@ -51,6 +58,7 @@ MIT, siehe [LICENSE](LICENSE).
 
 ---
 
-**English:** Juicy LRC Studio is a browser-only editor for word-timed (enhanced) LRC lyrics. Everything stays on your machine.
+**English:** Juicy LRC Studio is a **free LRC editor** (LRC maker / LRC generator) for word-timed (enhanced) LRC lyrics,
+running entirely in your browser. Free to use, no sign-up, no install, no upload – everything stays on your machine.
 Open https://turbulentoneiroid.github.io/JuicyLRCStudio/ or `index.html`, load an audio file and an LRC (or paste lyrics), then set words with the mouse or tap them.
 UI language is German. MIT licensed.

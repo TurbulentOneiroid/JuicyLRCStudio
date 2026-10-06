@@ -32,6 +32,7 @@ let origin = null;              // snapshot as loaded / created: Zurücksetzen g
 let edit = null;                // {li, before, free}: the one line being edited (B ... OK / Abbrechen), see startEdit
 let hoverX = null;              // mouse x over the timeline
 let blade = false;              // ✂ on: a click into the timeline cuts the line there, see cutLine
+let pvH = 96;                   // lyrics preview height, splitter under it, see setPvH
 let snip = null;                // short audition running: {t, timer}
 let replayT = null;             // last time set with the mouse or auditioned: Space replays it until normal playback
 let loop = null;                // {kind: 'line', li} | {kind: 'zone'} (loop box of the open line) | {kind: 'word', li, ti}
@@ -139,6 +140,7 @@ function changed(markDirty = true) {
 	renderWords();
 	renderIssues();
 	renderRef();
+	renderMini();
 	renderInfo();
 	saveDraftSoon();
 }
@@ -1359,6 +1361,7 @@ function updatePreview(now) {
 		let nx = li + 1;
 		while (doc.lines[nx] && (doc.lines[nx].brk || LRC.isBg(doc.lines[nx]))) nx++;
 		$('pvNext').textContent = doc.lines[nx] ? LRC.lineText(doc.lines[nx], false).replace(/\|/g, '') : '';
+		fitPreview();
 	}
 	if (!ln || ln.brk) return;
 	$('pvCur').querySelectorAll('span').forEach(el => {
@@ -2816,7 +2819,7 @@ $('refList').addEventListener('click', e => {
 // Drag the grip under the timeline or the bar left of the side panel; each size stays between min and max and is
 // kept in this browser. Double click = default size.
 
-const TL_H = {min: 150, def: 179, max: 520}, SIDE_W = {min: 230, def: 340, max: 680};
+const TL_H = {min: 150, def: 179, max: 520}, SIDE_W = {min: 230, def: 340, max: 680}, PV_H = {min: 34, def: 96, max: 260};
 const clampTo = (v, r) => Math.round(Math.max(r.min, Math.min(r.max, v)));
 
 function setTlH(h, keep = true) {
@@ -2824,6 +2827,25 @@ function setTlH(h, keep = true) {
 	LANE_Y = h - 42;
 	if (keep) try { localStorage.setItem('lrcEditorTlH', h); } catch (e) { /* ignore */ }
 }
+
+function setPvH(h, keep = true) {
+	pvH = clampTo(Math.min(h, innerHeight * 0.35), PV_H);
+	$('preview').style.height = pvH + 'px';
+	fitPreview();
+	if (keep) try { localStorage.setItem('lrcEditorPvH', pvH); } catch (e) { /* ignore */ }
+}
+
+// lyrics preview: the font follows the box height. Under 78 px the grey next line goes and the current line takes
+// its room (never bigger than just before); a line too wide for the box gets smaller still.
+function fitPreview() {
+	const next = pvH >= 78, cur = next ? Math.min(72, (pvH - 10) * 0.42) : Math.min(28, (pvH - 10) / 1.2);
+	const el = $('pvCur'), nx = $('pvNext');
+	nx.hidden = !next;
+	nx.style.fontSize = Math.max(11, cur * 0.5) + 'px';
+	el.style.fontSize = cur + 'px';
+	if (el.scrollWidth > el.clientWidth + 1) el.style.fontSize = Math.max(10, cur * el.clientWidth / el.scrollWidth * 0.97) + 'px';
+}
+window.addEventListener('resize', fitPreview);
 
 function setSideW(w, keep = true) {
 	w = clampTo(Math.min(w, innerWidth * 0.6), SIDE_W);
@@ -2839,7 +2861,8 @@ function splitter(el, cur, set, axis) {
 		el.setPointerCapture(e.pointerId);
 		el.classList.add('drag');
 		document.body.classList.add('resizing', axis === 'y' ? 'rs-y' : 'rs-x');
-		const move = ev => set(v0 + (axis === 'y' ? ev.clientY - p0 : p0 - ev.clientX));   // side panel: left = wider
+		const sx = document.body.classList.contains('side-left') ? -1 : 1;        // side panel: towards the centre = wider
+		const move = ev => set(v0 + (axis === 'y' ? ev.clientY - p0 : (p0 - ev.clientX) * sx));
 		const up = () => {
 			el.removeEventListener('pointermove', move);
 			el.removeEventListener('pointerup', up);
@@ -2854,14 +2877,71 @@ function splitter(el, cur, set, axis) {
 }
 
 splitter($('splitTl'), () => LANE_Y + 42, setTlH, 'y');
+splitter($('splitPv'), () => pvH, setPvH, 'y');
+$('splitPv').ondblclick = () => setPvH(PV_H.def);
 splitter($('splitSide'), () => document.querySelector('aside').getBoundingClientRect().width, setSideW, 'x');
 $('splitTl').ondblclick = () => setTlH(TL_H.def);
 $('splitSide').ondblclick = () => { document.querySelector('aside').style.width = ''; try { localStorage.removeItem('lrcEditorSideW'); } catch (e) { /* ignore */ } };
 try {
 	const h = +localStorage.getItem('lrcEditorTlH'), w = +localStorage.getItem('lrcEditorSideW');
+	setPvH(+localStorage.getItem('lrcEditorPvH') || PV_H.def, false);
 	if (h) setTlH(h, false);
 	if (w) setSideW(w, false);
 } catch (e) { /* ignore */ }
+
+// check tools left of ▶: their left edge lines up with the file buttons above (▶ follows right after them)
+function alignChecks() {
+	const bar = document.querySelector('header .bar'), ck = $('checks');
+	ck.style.marginLeft = getComputedStyle(bar).display === 'grid' ?
+		Math.max(0, document.querySelector('header .files').offsetLeft - bar.offsetLeft) + 'px' : '';
+}
+window.addEventListener('resize', alignChecks);
+window.addEventListener('load', alignChecks);          // web fonts change the widths
+alignChecks();
+
+// ---------------------------------------------------------------- side panel: dock left / right (⇆), fold to a strip (»)
+
+function sideLayout(left, mini, keep = true) {
+	const b = document.body.classList;
+	b.toggle('side-left', left);
+	b.toggle('side-mini', mini);
+	// the arrow points where the panel goes: folding pushes it to its edge, unfolding pulls it back
+	$('sideFold').textContent = (mini ? !left : left) ? '«' : '»';
+	$('sideFold').title = mini ? 'Seitenleiste wieder aufklappen' : 'Seitenleiste einklappen: nur noch ein schmaler Streifen mit den Fehlern';
+	if (keep) try { localStorage.setItem('lrcEditorSide', (left ? 'L' : 'R') + (mini ? 'm' : '')); } catch (e) { /* ignore */ }
+}
+$('sideDock').onclick = () => sideLayout(!document.body.classList.contains('side-left'), document.body.classList.contains('side-mini'));
+$('sideFold').onclick = () => sideLayout(document.body.classList.contains('side-left'), !document.body.classList.contains('side-mini'));
+try {
+	const s = localStorage.getItem('lrcEditorSide') || 'R';
+	sideLayout(s[0] === 'L', s[1] === 'm', false);
+} catch (e) { sideLayout(false, false, false); }
+
+// the strip: counts, then one tick per line with a problem at its place in the song (by line number)
+function renderMini() {
+	const n = lv => issues.filter(i => i.level === lv).length, unset = issues.filter(i => i.code === 'unset');
+	const unsetL = new Set(unset.map(i => i.li)), refL = new Set(refLines ? refDiffs.map(d => d.li) : []);
+	const b = [['err', n('err'), 'Fehler'], ['warn', n('warn'), 'Warnungen'], ['unset', unset.length, 'Wörter noch nicht gesetzt'],
+		['ref', refLines ? refDiffs.length : 0, 'Abweichungen vom Original']].filter(x => x[1]);
+	$('miniBadges').innerHTML = b.length ? b.map(x => '<div class="mb ' + x[0] + '" title="' + x[1] + ' ' + x[2] + '">' +
+		(x[1] > 99 ? '99+' : x[1]) + '</div>').join('') : doc.lines.length ? '<div class="mb ok" title="Alles ok">✓</div>' : '';
+	const N = doc.lines.length, h = N ? Math.max(1.5, 100 / N) : 0, ticks = [];
+	doc.lines.forEach((ln, li) => {
+		const kind = lineBad.get(li) || (refL.has(li) ? 'ref' : unsetL.has(li) ? 'unset' : '');
+		if (!kind) return;
+		const what = kind === 'err' ? 'Fehler' : kind === 'warn' ? 'Warnung' : kind === 'ref' ? 'weicht vom Original ab' : 'ungesetzte Wörter';
+		ticks.push('<i class="' + kind + '" data-li="' + li + '" style="top:' + (li / N * 100).toFixed(2) + '%;height:' + h.toFixed(2) +
+			'%" title="Zeile ' + (li + 1) + ': ' + what + ' – ' + esc(LRC.lineText(ln, false).replace(/\|/g, '').slice(0, 60)) + '"></i>');
+	});
+	$('miniMap').innerHTML = ticks.join('');
+}
+$('miniMap').addEventListener('click', e => {
+	const tick = e.target.closest('i[data-li]');
+	if (!tick) return;
+	const li = +tick.dataset.li;
+	if (edit && li !== edit.li) { lockedHint(); return; }
+	goLine(li);
+});
 
 // ---------------------------------------------------------------- splash: Juicy and the start jingle
 // Browsers only let a page make sound after a click or key, so if the jingle is blocked the splash waits for one.
