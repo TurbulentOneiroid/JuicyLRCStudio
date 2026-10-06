@@ -149,6 +149,7 @@
 		<span><kbd>Rad</kbd> Zoom · <kbd>Shift</kbd>+Rad blättern</span>
 		<span><kbd>Leertaste</kbd> Play / Stop</span>
 		<span><kbd>X</kbd> ✂ Klinge: Klick teilt die Zeile</span>
+		<span><kbd>P</kbd> ⏸ Pause: Klick lässt das Wort dort enden</span>
 	</div>
 	<canvas id="overview" height="34"></canvas>
 	<canvas id="timeline" height="179"></canvas>
@@ -169,6 +170,7 @@
 			<button id="btnNext" title="Zur nächsten Zeile mit Fehlern oder ungesetzten Wörtern (N, Shift+N zurück)">Nächster Fehler ⏭</button>
 			<button id="btnVoice" title="Stimme der ausgewählten Zeilen setzen (V): v1, v2 … / M, F, D / bg = Hintergrund">Stimme</button>
 			<button id="btnSplit" title="Klinge an / aus (X): Klick in die Zeitleiste teilt die Zeile genau dort in zwei – wie einen Clip im Schnittprogramm">✂ Teilen</button>
+			<button id="btnPause" title="Pause-Werkzeug an / aus (P): Klick in ein Wort lässt es genau dort enden, bis zum nächsten Wort ist Pause">⏸ Pause</button>
 			<button id="btnRepair" title="Ausgewählte Zeilen neu tippen (R). Zeilen auswählen: Zeilennummer anklicken, Shift = Bereich, Strg = einzeln dazu">Reparieren</button>
 			<span id="hint"></span>
 		</div>
@@ -250,7 +252,7 @@
 				<tr><td>Loop-Box</td><td>beim Bearbeiten und Reparieren: von <i>Vorlauf</i> vor der Zeile bis zum Anfang der nächsten Zeile. Linke Kante ziehen = Vorlauf, rechte Kante = Ende</td></tr>
 				<tr><td>Wort ziehen</td><td>in der Zeitleiste die Wort-Box (Balken unter dem Wort) anfassen = ganzes Wort verschieben. Nach rechts wird es kürzer, das nächste Wort bleibt stehen; nach links entsteht dahinter eine Pause. Schiebst du es über ein Nachbarwort hinaus, liegt es rot eine Ebene höher (mit seiner Länge), bis du es wieder an seinen Platz ziehst – so kannst du darunter erst die anderen richten. Das Zeilenende bleibt immer hinter dem letzten Wort, der Zeilenanfang klebt am ersten Wort.
 					Wörter mit derselben Zeit (rot) liegen gestapelt über der Box, mit ihrem Text, und lassen sich einzeln anfassen. Der Knopf <i>⇔ n Wörter auffächern</i> über dem Stapel (oder Doppelklick auf den Stapel) = auffächern: jedes Wort bekommt eine Länge nach seinem Text (auch über Zeilen hinweg), der Rest der Zeile und ihr Ende rücken mit, alles bleibt in einer Reihe. Läuft die Zeile dann in die nächste hinein, liegt sie rot leuchtend eine Ebene höher, bis du Platz machst. Ein sehr hoher Stapel wird zusammengedrückt, damit er auf den Schirm passt. Linke oder rechte Kante ziehen = Wort nach links / rechts länger oder kürzer. Dabei spielt der Anfang des Wortes kurz an (wie Rechtsklick), sobald die Maus kurz still steht, und wiederholt das, solange du die Maustaste hältst, immer von der neuen Stelle aus. Gilt sofort, ohne OK</td></tr>
-				<tr><td>Zeile ziehen</td><td>die Zeilen-Box ganz unten anfassen und nach links / rechts ziehen = die ganze Zeile mit allen Wörtern verschieben. Dabei spielt ihr Anfang kurz an, immer wieder, solange du die Maustaste hältst. Gilt sofort, ohne OK. Klick ohne Ziehen = Zeile markieren. Überlappt eine Zeile eine andere (auch weil du sie darüber geschoben hast), liegt sie samt ihren Wörtern rot leuchtend eine Ebene höher: unten Zeile und Wörter, darüber die andere Zeile und ihre Wörter. Sobald wieder Platz ist, rutscht sie nach unten</td></tr>
+				<tr><td>Zeile ziehen</td><td>die Zeilen-Box ganz unten anfassen und nach links / rechts ziehen = die ganze Zeile mit allen Wörtern verschieben. Dabei spielt ihr Anfang kurz an, immer wieder, solange du die Maustaste hältst. Gilt sofort, ohne OK. Klick ohne Ziehen = Zeile markieren. Überlappt eine Zeile eine andere (auch weil du sie darüber geschoben hast), liegt sie samt ihren Wörtern rot leuchtend eine Ebene höher: unten Zeile und Wörter, darüber die andere Zeile und ihre Wörter. Sobald wieder Platz ist, rutscht sie nach unten. Schiebst du eine Zeile ganz an einer anderen vorbei, rückt sie im Text an die richtige Stelle. Steht eine Zeile trotzdem an der falschen Stelle (z. B. so geladen), zeigt ein oranges Schild unter ihr mit Pfeil, nach welcher Zeile sie steht; ein Klick darauf sortiert alle Zeilen nach Zeit</td></tr>
 				<tr><td>Rechtsklick</td><td>in der Zeitleiste: ab dort kurz anspielen (Länge oben bei <i>Anspielen</i>). <b>Gedrückt halten</b> = der Song spielt weiter, bis du loslässt (auch über einen Loop hinaus), dann springt er zurück zum Startpunkt. Beim Bearbeiten hängt das markierte Wort an der Maus, <b>Linksklick</b> setzt es und das nächste der Zeile hängt dran. Nach dem letzten Wort kommt das Zeilenende (⏹), dann läuft die Zeile im Loop</td></tr>
 				<tr><td>Strg+Klick</td><td>beim Bearbeiten: in der Zeitleiste nur dorthin springen, statt zu setzen</td></tr>
 				<tr><td>↻ (neben ▶)</td><td>Loop-Modus, an = die markierte Zeile läuft immer im Loop; wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Track läuft durch</td></tr>
@@ -261,7 +263,8 @@
 				<tr><td>T</td><td><i>Leertaste tippt</i> an / aus. An: läuft das Lied, setzt die Leertaste das markierte Wort. Beim letzten Wort einer Zeile <b>gedrückt halten</b>, bis es zu Ende gesungen ist: Loslassen setzt das Zeilenende. Nicht bei offener Zeile</td></tr>
 				<tr><td>E</td><td>Ende des zuletzt gesetzten Worts jetzt setzen (Zeilenende oder Pause)</td></tr>
 				<tr><td>Rücktaste</td><td>letzten Tipp zurücknehmen und 2 s zurückspulen</td></tr>
-				<tr><td>P / Esc</td><td>Abspielen / Pause (Esc beendet auch den Loop, bricht das Bearbeiten bzw. eine Reparatur ab)</td></tr>
+				<tr><td>P</td><td>⏸ Pause-Werkzeug an / aus: ein Klick in ein Wort lässt es genau dort enden, bis zum nächsten Wort ist Pause (grüne Pause-Marke, lässt sich wie immer ziehen). Nur zwischen zwei Wörtern, nicht im letzten Wort (dort ist das Zeilenende)</td></tr>
+				<tr><td>Esc</td><td>Stop (beendet auch den Loop, schaltet Klinge / Pause-Werkzeug aus, bricht das Bearbeiten bzw. eine Reparatur ab)</td></tr>
 				<tr><td>R</td><td>Reparieren: die ausgewählten Zeilen (Zeilennummer anklicken, Shift = Bereich, Strg = einzeln) werden eine nach der anderen neu gesetzt, mit Loop-Box und den alten Zeiten grau als Hilfe. OK = nächste Zeile, Esc = alte Zeiten zurück</td></tr>
 				<tr><td>Enter</td><td>ab kurz vor dem markierten Wort abspielen (beim Bearbeiten: OK)</td></tr>
 				<tr><td>← →</td><td>vorheriges / nächstes Wort markieren</td></tr>

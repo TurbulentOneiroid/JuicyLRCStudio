@@ -28,12 +28,14 @@ let version = 0;                // bumps on every change, the preview rebuilds o
 let marks = [];                 // timeline hit boxes of the last frame: start / end marks
 let bodies = [];                // ... and word boxes {x0, x1, y0, y1, li, ti}
 let fanBtns = [];               // ... and the "fan out" buttons over stacks {x0, x1, y0, y1, li, ti}
+let orderBtns = [];             // ... and the "sort by time" signs under lines in the wrong place {x0, x1, y0, y1}
 let drag = null;
 let origin = null;              // snapshot as loaded / created: Zurücksetzen goes back to it
 let edit = null;                // {li, before, free}: the one line being edited (B ... OK / Abbrechen), see startEdit
 let hoverX = null;              // mouse x over the timeline
 let hoverY = null;              // ... and y
 let blade = false;              // ✂ on: a click into the timeline cuts the line there, see cutLine
+let pauser = false;             // ⏸ on: a click into the timeline starts a pause there, see pauseAt
 let pvH = 96;                   // lyrics preview height, splitter under it, see setPvH
 let snip = null;                // short audition running: {t, timer}
 let replayT = null;             // last time set with the mouse or auditioned: Space replays it until normal playback
@@ -1103,10 +1105,41 @@ function addLine(li) {
 // (a word is never cut in half, syllables stay with their word). Cut in a pause: the pause stays the left end.
 function setBlade(on) {
 	if (on && edit) { lockedHint(); return; }
+	if (on && pauser) setPauser(false);
 	blade = on;
 	$('btnSplit').classList.toggle('on', on);
 	tl.style.cursor = on ? 'crosshair' : '';
 	if (on) hint('✂ Klinge an: Klick in die Zeitleiste teilt die Zeile genau dort. X, Esc oder ✂ = aus.');
+}
+
+// ⏸ pause tool, used like the blade: while it is on, a click into the timeline ends the word sung there at that
+// point, so a pause runs from there to the next word (a green Pause mark, to drag on as usual)
+function setPauser(on) {
+	if (on && edit) { lockedHint(); return; }
+	if (on && blade) setBlade(false);
+	pauser = on;
+	$('btnPause').classList.toggle('on', on);
+	tl.style.cursor = on ? 'crosshair' : '';
+	if (on) hint('⏸ Pause-Werkzeug an: Klick in ein Wort lässt es dort enden, bis zum nächsten Wort ist Pause. P, Esc oder ⏸ = aus.');
+}
+
+function pauseAt(li, c) {
+	if (edit) { setPauser(false); lockedHint(); return; }
+	const ln = li != null && doc.lines[li];
+	if (!ln || ln.brk) { hint('⏸ Hier ist keine Zeile – in ein Wort klicken.'); return; }
+	const tk = ln.tokens;
+	let j = -1;
+	tk.forEach((k, i) => { if (k.t != null && k.t <= c) j = i; });
+	if (j < 0) { hint('⏸ Vor dem ersten Wort der Zeile – hier gibt es nichts zu pausieren.'); return; }
+	const k = tk[j], nx = tk[j + 1];
+	if (!nx) { hint('⏸ Im letzten Wort: dort ist das Ende der Zeile (E oder die Ende-Marke ziehen), keine Pause.'); return; }
+	if (nx.glue) { hint('⏸ Mitten im Wort „' + k.text + '“ – eine Pause geht nur zwischen zwei Wörtern.'); return; }
+	if (k.end != null && c >= k.end - 0.005) { hint('⏸ Hier ist schon Pause.'); return; }
+	if (nx.t != null && c > nx.t - 0.1) { hint('⏸ Zu knapp vor dem nächsten Wort – etwas weiter links klicken.'); return; }
+	pushUndo();
+	k.end = LRC.q(Math.max(c, k.t + 0.05));
+	changed();
+	hint('⏸ Pause nach „' + k.text + '“ ab ' + LRC.fmt(k.end).slice(3) + '  (Strg+Z = zurück)');
 }
 
 // the line box at timeline x (and y, if it is in the line box row); main lines before background vocals
@@ -1415,16 +1448,54 @@ const LIFT_DY = -42;             // a lifted (overlapping) line: its box and its
 // Of two such lines the later one is lifted, unless the earlier one was just moved or fanned out: then that one.
 let liftLine = null;
 function overlapLines() {
-	const out = new Set();
-	let pe = null, pli = null;
+	const out = new Set(), ls = [];
 	doc.lines.forEach((ln, li) => {
-		if (ln.brk || !ln.tokens.length || LRC.isBg(ln)) return;
-		const t = ln.tokens[0].t;
-		if (t != null && pe != null && t < pe - 0.005) out.add(doc.lines[pli] === liftLine ? pli : li);
+		if (ln.brk || !ln.tokens.length || LRC.isBg(ln) || ln.tokens[0].t == null) return;
 		const last = ln.tokens[ln.tokens.length - 1];
-		if (last.end != null || last.t != null) { pe = last.end != null ? last.end : last.t; pli = li; }
+		ls.push({li, a: ln.tokens[0].t, b: last.end != null ? last.end : last.t != null ? last.t : ln.tokens[0].t});
+	});
+	ls.sort((x, y) => x.a - y.a || x.li - y.li);         // by time: only a real overlap counts, not the order in the text
+	let pe = null, pli = null;
+	for (const {li, a, b} of ls) {
+		if (pe != null && a < pe - 0.005) out.add(doc.lines[pli] === liftLine ? pli : li);
+		if (pe == null || b > pe) { pe = b; pli = li; }
+	}
+	return out;
+}
+
+// main lines that come earlier than a line above them in the text: li -> that line
+function lineOrder() {
+	const out = new Map();
+	let pt = null, pli = null;
+	doc.lines.forEach((ln, li) => {
+		if (ln.brk || LRC.isBg(ln)) return;
+		const t = LRC.lineTime(ln);
+		if (t == null) return;
+		if (pt != null && t < pt - 0.005) out.set(li, pli);
+		else { pt = t; pli = li; }
 	});
 	return out;
+}
+
+// all lines in the order of their times (a line without time stays behind the one before it); marks follow along
+function sortLines() {
+	if (edit || repair) { hint('Erst die offene Zeile schließen, dann sortieren.'); return false; }
+	let key = -Infinity;
+	const order = doc.lines.map((ln, i) => {
+		const t = LRC.lineTime(ln);
+		if (t != null) key = t;
+		return {ln, i, key};
+	}).sort((x, y) => x.key - y.key || x.i - y.i);
+	if (order.every((o, n) => o.i === n)) return false;
+	pushUndo();
+	const to = new Map(order.map((o, n) => [o.i, n]));
+	doc.lines = order.map(o => o.ln);
+	if (sel) sel = {...sel, li: to.get(sel.li)};
+	if (loop && loop.li != null) loop = {...loop, li: to.get(loop.li)};
+	picked = new Set();
+	changed();
+	renderSelection();
+	return true;
 }
 
 // a lifted line box under the mouse
@@ -1691,6 +1762,28 @@ function drawTimeline(now) {
 	// lifted line boxes last, on top of the words
 	for (const li of lifted) drawLane(doc.lines[li], li, true);
 
+	// a line earlier in time than a line above it in the text: a sign with an arrow to that line, a click sorts
+	orderBtns = [];
+	ctx.font = 'bold 10px ' + UI_FONT;
+	for (const [li, pli] of lineOrder()) {
+		const l = lanes.find(o => o.li === li);
+		if (!l) continue;
+		const pt = LRC.lineTime(doc.lines[pli]);
+		const label = '⇄ steht im Text nach Zeile ' + (pli + 1) + ' (' + LRC.fmt(pt).slice(0, 5) + ' →)  · Klick: nach Zeit sortieren';
+		const bw = ctx.measureText(label).width + 12, bh = 15;
+		const bx = Math.max(2, Math.min(W - bw - 2, l.x0)), by = l.y + l.h + 2;
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.warn;
+		ctx.globalAlpha = hov ? 1 : 0.9;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		orderBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh});
+	}
+
 	const hb = hoverX != null && hoverY != null && !fanAt(hoverX, hoverY) && bodyAt(hoverX, hoverY);
 	if (hb && hb.stack) {
 		const k = doc.lines[hb.li].tokens[hb.ti];
@@ -1729,6 +1822,20 @@ function drawTimeline(now) {
 	// playhead
 	ctx.fillStyle = C.play;
 	ctx.fillRect(X(now) - 1, 0, 2, H);
+
+	// ⏸ pause tool: a green line at the mouse with its time
+	if (pauser && hoverX != null) {
+		ctx.strokeStyle = C.ok;
+		ctx.lineWidth = 2;
+		ctx.beginPath();
+		ctx.moveTo(hoverX, 0);
+		ctx.lineTo(hoverX, H);
+		ctx.stroke();
+		ctx.lineWidth = 1;
+		ctx.font = 'bold 12px ' + UI_FONT;
+		ctx.fillStyle = C.ok;
+		ctx.fillText('⏸ ' + LRC.fmt(LRC.q(t0 + hoverX / W * sp)).slice(3), Math.min(W - 70, hoverX + 5), 14);
+	}
 
 	// ✂ blade: a red cut line at the mouse with its time
 	if (blade && hoverX != null) {
@@ -1846,8 +1953,9 @@ window.addEventListener('keydown', e => {
 	let used = true;
 	if (k === 'Backspace') backTap();
 	else if (low === 'e') { if (edit || tapMode()) endNow(); else canTime(); }
-	else if (low === 'p') audio.paused ? play() : pause();
+	else if (low === 'p') setPauser(!pauser);
 	else if (k === 'Escape' && blade) setBlade(false);
+	else if (k === 'Escape' && pauser) setPauser(false);
 	else if (k === 'Escape') {
 		if (loop && loop.kind !== 'zone') { loop = null; pause(); } else if (edit) endEdit(false); else { loop = null; pause(); }
 	}
@@ -1960,13 +2068,13 @@ tl.addEventListener('contextmenu', e => e.preventDefault());
 tl.addEventListener('mousemove', e => {
 	hoverX = e.offsetX;
 	hoverY = e.offsetY;
-	if (!drag) tl.style.cursor = blade ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
+	if (!drag) tl.style.cursor = blade || pauser ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
 });
 
 // what a press would do here: edges resize (ew-resize), word and line boxes move (grab), else the CSS default
 function tlCursor(x, y) {
 	const open = li => !edit || edit.li === li;
-	if (fanAt(x, y)) return 'pointer';
+	if (fanAt(x, y) || orderAt(x, y)) return 'pointer';
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {
 		const b = u || lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
@@ -2059,7 +2167,13 @@ function dragLine(li, x0) {
 		tl.style.cursor = '';
 		const moved = drag.moved;
 		drag = null;
-		if (moved) { changed(); dragSnip(LRC.lineTime(ln), true); return; }
+		if (moved) {
+			changed();
+			const lo = lineOrder(), at = doc.lines.indexOf(ln);
+			if (!overlapLines().has(at) && (lo.has(at) || [...lo.values()].includes(at))) sortLines();    // moved past: into place
+			dragSnip(LRC.lineTime(ln), true);
+			return;
+		}
 		if (edit) return;
 		const looping = !!loop;
 		goLine(li);
@@ -2077,8 +2191,10 @@ tl.addEventListener('mousedown', e => {
 	}
 	if (e.button !== 0) return;
 	if (blade) { cutLine(lineAtX(x, y), tlTime(x)); return; }
+	if (pauser) { pauseAt(lineAtX(x, y), tlTime(x)); return; }
 	const fb = fanAt(x, y);
 	if (fb) { fanClick(fb); return; }
+	if (orderAt(x, y)) { sortLines(); return; }
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {                  // line box: click = mark that line, drag = move the whole line
 		const b = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
@@ -2230,6 +2346,7 @@ function fanOut(li, ti) {
 	return true;
 }
 
+const orderAt = (x, y) => orderBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
 const fanAt = (x, y) => fanBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
 
 // fan out the stack word b sits in (button or double click); a stack reaching into a locked line stays
@@ -2290,6 +2407,7 @@ $('btnOpen').onclick = openLrc;
 $('fileLrc').onchange = e => { if (e.target.files[0]) loadLrcFile(e.target.files[0]); e.target.value = ''; };
 $('btnSave').onclick = () => save(false);
 $('btnSplit').onclick = () => setBlade(!blade);
+$('btnPause').onclick = () => setPauser(!pauser);
 $('btnSaveAs').onclick = () => save(true);
 $('btnPlay').onclick = () => audio.paused ? play() : pause();
 try { loopMode = localStorage.getItem('lrcEditorLoopMode') !== '0'; } catch (e) { /* ignore */ }

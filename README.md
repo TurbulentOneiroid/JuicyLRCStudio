@@ -40,6 +40,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - Gelöschte Wörter, Zeilen und Zeiten zerplatzen mit einem Blub in aufsteigende Seifenblasen (unter ⚙ abschaltbar)
 - **✂ Klinge (X):** wie im Schnittprogramm in die Zeitleiste klicken, die Zeile wird dort in zwei geteilt (links endet sie
   am Schnitt, rechts beginnt sie mit dem nächsten Wort)
+- **⏸ Pause (P):** genauso in ein Wort klicken, es endet dort, bis zum nächsten Wort ist Pause (grüne Pause-Marke)
 - **Mit Original-Lyrics vergleichen:** Original-Songtext einfügen, falsche, fehlende und überzählige Wörter werden markiert, mit
   Vorschlag pro Wort (Tauschen / Einfügen / Löschen). `[Chorus]` usw. und Werbung von Lyrics-Seiten zählen nicht,
   Wiederholungen und Remix-Schnitte sind kein Fehler. *Neu aus Text* lässt diese Überschriften ebenfalls weg

@@ -187,7 +187,7 @@ const LRC = (() => {
 	//         (same as END_GAP in lrc_parser.py)
 	function check(doc, maxGap = 5, endGap = 0.5) {
 		const out = [];
-		let prev = null, prevEnd = null;
+		let prev = null, prevEnd = null, prevStart = null, prevLi = null;
 		const sec = d => d.toFixed(1).replace('.', ',') + ' s';
 		doc.lines.forEach((ln, li) => {
 			if (ln.brk) return;
@@ -213,7 +213,10 @@ const LRC = (() => {
 					out.push({li, ti, level: 'err', code: 'same', msg: 'gleiche Zeit wie „' + prev.text + '“ davor'});
 				else if (prev && k.t < prev.t)
 					out.push({li, ti, level: 'err', code: 'order', msg: 'früher als „' + prev.text + '“ davor'});
-				if (ti === 0 && !bg && prevEnd != null && k.t < prevEnd - SAME)
+				if (ti === 0 && !bg && prevStart != null && k.t < prevStart - SAME)
+					out.push({li, ti, level: 'warn', code: 'lineorder', msg: 'steht nach Zeile ' + (prevLi + 1) + ', kommt aber früher (' +
+						fmt(k.t).slice(0, 5) + ' statt nach ' + fmt(prevStart).slice(0, 5) + ') – Zeilen nach Zeit sortieren'});
+				else if (ti === 0 && !bg && prevEnd != null && k.t < prevEnd - SAME)
 					out.push({li, ti, level: 'warn', code: 'overlap', msg: 'beginnt vor dem Ende der Zeile davor'});
 				if (k.end != null && k.end <= k.t + SAME)
 					out.push({li, ti, end: true, level: 'err', code: 'endorder', msg: 'Ende liegt nicht nach dem Anfang'});
@@ -228,7 +231,11 @@ const LRC = (() => {
 				!out.some(i => i.li === li && i.code === 'long' && i.end))
 				out.push({li, ti: ln.tokens.length - 1, end: true, level: 'warn', code: 'noend', msg: 'Zeilenende fehlt'});
 			if (bg) prev = mainPrev;
-			else if (last.end != null) prevEnd = last.end;
+			else {
+				if (last.end != null) prevEnd = last.end;
+				const t0 = lineTime(ln);
+				if (t0 != null && (prevStart == null || t0 >= prevStart - SAME)) { prevStart = t0; prevLi = li; }
+			}
 		});
 		return out;
 	}
