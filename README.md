@@ -20,7 +20,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - **Loop-Modus** (↻ neben ▶): die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen; aus = ganzen Track hören
 - Zeile bearbeiten oder reparieren mit **Loop-Box** (Vorlauf einstellbar, die Wiedergabe bleibt in der Box)
 - Wörter in der Zeitleiste ziehen (Box = verschieben, nach rechts wird sie kürzer, Kanten = länger / kürzer) und ganze Zeilen
-  an ihrer Box verschieben (überlappt eine Zeile die davor, liegt ihre Box rot leuchtend eine Ebene höher, bis wieder Platz ist),
+  an ihrer Box verschieben (über Nachbarn hinweg geschoben, liegt ein Wort oder eine ganze Zeile samt Wörtern rot eine Ebene höher, bis wieder Platz ist),
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau.
   Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen,
   der Knopf „⇔ auffächern“ darüber (oder Doppelklick) legt sie nebeneinander (Länge nach Text, auch über Zeilen hinweg); der Rest der Zeile und ihr Ende rücken mit

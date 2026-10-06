@@ -126,9 +126,18 @@ function endOf(li, ti) {
 	return v === undefined ? null : v;
 }
 
+// the line time always sits on the first word, an end mark always after its word (the line end behind the last word)
+function tidy() {
+	for (const ln of doc.lines) {
+		if (ln.tokens.length && ln.tokens[0].t != null) ln.t = ln.tokens[0].t;
+		for (const k of ln.tokens) if (k.t != null && k.end != null && k.end < k.t + 0.05) k.end = LRC.q(k.t + 0.05);
+	}
+}
+
 function changed(markDirty = true) {
 	if (markDirty) dirty = true;
 	version++;
+	tidy();
 	recalc();
 	issues = LRC.check(doc, maxGap(), endGap());
 	issueAt = new Map();
@@ -1400,17 +1409,18 @@ const UI_FONT = '"Segoe UI Variable Text", -apple-system, "SF Pro Text", Inter, 
 let LANE_Y = 137;               // timeline: words and waveform above, line boxes from here, seconds at the bottom;
                                 // grows with the timeline height (splitter under it, see setTlH)
 
-const LIFT_DY = -44;             // a lifted (overlapping) line box: this far above the line box row, over the words
+const LIFT_DY = -42;             // a lifted (overlapping) line: its box and its words this far up, a layer over the others
 
 // main lines that start before the line before them ends: the 'overlap' rule of LRC.check, worked out live while dragging
-// Of two such lines the later one is lifted, unless the earlier one was just fanned out and ran into it: then that one.
+// Of two such lines the later one is lifted, unless the earlier one was just moved or fanned out: then that one.
+let liftLine = null;
 function overlapLines() {
 	const out = new Set();
 	let pe = null, pli = null;
 	doc.lines.forEach((ln, li) => {
 		if (ln.brk || !ln.tokens.length || LRC.isBg(ln)) return;
 		const t = ln.tokens[0].t;
-		if (t != null && pe != null && t < pe - 0.005) out.add(liftFirst.has(doc.lines[pli]) ? pli : li);
+		if (t != null && pe != null && t < pe - 0.005) out.add(doc.lines[pli] === liftLine ? pli : li);
 		const last = ln.tokens[ln.tokens.length - 1];
 		if (last.end != null || last.t != null) { pe = last.end != null ? last.end : last.t; pli = li; }
 	});
@@ -1470,6 +1480,16 @@ function drawTimeline(now) {
 	// errors red / orange, the rest grey; background vocals as a thin bar below. A line that starts before the line
 	// before it ends (same rule as the check) is lifted above the words and glows red until it fits again.
 	const lift = overlapLines(), lifted = [];
+	// lines a lifted line lies over: their word labels go a row down, the lifted line keeps the top row
+	const under = new Set();
+	for (const li of lift) {
+		const r = lineRange(li);
+		if (r) doc.lines.forEach((ln, j) => {
+			if (lift.has(j) || ln.brk || LRC.isBg(ln)) return;
+			const q = lineRange(j);
+			if (q && q.a < r.b - 0.005 && q.b > r.a + 0.005) under.add(j);
+		});
+	}
 	lanes = [];
 	const drawLane = (ln, li, up) => {
 		const r = lineRange(li);
@@ -1555,9 +1575,16 @@ function drawTimeline(now) {
 		for (let j = n + 1; j < vis.length && Math.abs(vis[j].k.t - e.k.t) < 0.005; j++) if (lane(vis[j]) === lane(e)) l++;
 		return l;
 	});
+	// words out of order (moved over a neighbour) lie a level up: of the two, the one moved last, else the later one
+	const outTok = new Set();
+	for (const ln of doc.lines) {
+		const tk = ln.tokens.filter(k => k.t != null);
+		for (let i = 1; i < tk.length; i++) if (tk[i].t < tk[i - 1].t - 0.005) outTok.add(tk[i - 1] === liftTok ? tk[i - 1] : tk[i]);
+	}
+	vis.forEach((e, n) => { if (outTok.has(e.k) && !lvl[n]) lvl[n] = 1; });
 	bodies = [];
 	vis.forEach((e, n) => {
-		const bgw = lane(e) === 1, ly = bgw ? 44 : 0;      // background vocals: second label row, upper bar
+		const bgw = lane(e) === 1, ly = bgw ? 44 : under.has(e.li) ? 34 : 0;    // background vocals / under a lifted line: lower row
 		const end = boxEnd(e.li, e.ti), last = e.ti === doc.lines[e.li].tokens.length - 1;
 		const sg = last && e.k.end == null && sugg.has(e.li);
 		const x = X(e.k.t), xe = end != null ? X(end) : x + 30;
@@ -1566,7 +1593,7 @@ function drawTimeline(now) {
 		const sung = now >= e.k.t;
 		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : sung ? C.sung : C.lane;
 		const stack = lvl[n] > 0;
-		let bh = bgw ? 9 : 14, by = bgw ? LANE_Y - 33 : LANE_Y - 21, bw = Math.max(2, xe - x - 1);
+		let bh = bgw ? 9 : 14, by = (bgw ? LANE_Y - 33 : LANE_Y - 21) + (lift.has(e.li) ? LIFT_DY : 0), bw = Math.max(2, xe - x - 1);
 		if (stack) {
 			let hi = lvl[n];
 			for (let j = n - 1; j >= 0 && Math.abs(vis[j].k.t - e.k.t) < 0.005; j--) hi = Math.max(hi, lvl[j]);
@@ -1589,7 +1616,7 @@ function drawTimeline(now) {
 			ctx.strokeRect(x + 1, by - 1, Math.max(2, bw - 1), bh + 2);
 			ctx.lineWidth = 1;
 		}
-		bodies.push({x0: x, x1: x + bw, y0: stack ? by - 1 : by - 4, y1: stack ? by + bh + 1 : by + bh + 4, li: e.li, ti: e.ti, stack});
+		bodies.push({x0: x, x1: x + bw, y0: stack ? by - 1 : by - 4, y1: stack ? by + bh + 1 : by + bh + 4, li: e.li, ti: e.ti, stack, out: outTok.has(e.k)});
 		if (sg) {                                    // missing line end: suggested end, dashed, can be dragged
 			const isSelE = sel && sel.end && sel.li === e.li && sel.ti === e.ti;
 			ctx.strokeStyle = isSelE ? C.cursor : C.warn;
@@ -1608,7 +1635,8 @@ function drawTimeline(now) {
 		}
 		ctx.fillStyle = isSel ? C.cursor : lv === 'err' ? C.err : e.ti === 0 ? C.textHi : C.mark;
 		ctx.fillRect(x - (isSel ? 1 : 0), 0, isSel ? 3 : 1, LANE_Y - 5);
-		const nxv = vis.slice(n + 1).find(o => lane(o) === lane(e));
+		const row = o => lane(o) === 1 ? 2 : under.has(o.li) ? 1 : 0;
+		const nxv = vis.slice(n + 1).find(o => row(o) === row(e));
 		const nextX = nxv ? X(nxv.k.t) : W;
 		ctx.save();
 		ctx.beginPath();
@@ -1638,7 +1666,7 @@ function drawTimeline(now) {
 	fanBtns = [];
 	const tops = new Map();
 	for (const o of bodies) {
-		if (!o.stack) continue;
+		if (!o.stack || o.out) continue;
 		const key = (LRC.isBg(doc.lines[o.li]) ? 'b' : 'm') + doc.lines[o.li].tokens[o.ti].t;
 		const c = tops.get(key);
 		if (!c) tops.set(key, {o, n: 2});
@@ -1969,19 +1997,24 @@ function dragSnip(t, now = false) {
 	if (now) audition(t); else dragSnipTimer = setTimeout(() => { if (drag) audition(t); }, 140);
 }
 
-// a word box dragged: it cannot pass the words before and after it. Moved right it gets shorter and the next word
-// stays where it is; moved left it leaves a pause after it. The last word (nothing placed after it) keeps its length.
+// a word box dragged: moved right it gets shorter and the next word stays where it is; moved left it leaves a pause
+// after it. Pushed past a neighbour it does not stop: it keeps its length and lies a level up (red) until it is put
+// back in place, so the words below can be fixed first. The last word (nothing placed after it) keeps its length.
 // Always computed from the line as it was at the press, so going back and forth leaves nothing behind.
+let liftTok = null;             // the word moved last: of two words out of order, this one is lifted
 function moveWord(h, dt) {
 	const ln = doc.lines[h.li], o = drag.w, ok = o[h.ti], prev = o[h.ti - 1], next = o[h.ti + 1];
 	ln.tokens.forEach((x, i) => { x.t = o[i].t; x.end = o[i].end; });
-	const nt = next && next.t != null ? next.t : null;
-	let lo = -ok.t, hi = Infinity;
-	if (prev && prev.t != null) lo = Math.min(0, Math.max(lo, prev.t + 0.05 - ok.t));    // already too close: it never jumps
-	if (nt != null) hi = Math.max(0, nt - 0.05 - ok.t);
-	dt = LRC.q(Math.max(lo, Math.min(hi, dt)));
+	const nt = next && next.t != null ? next.t : null, pt = prev && prev.t != null ? prev.t : null;
+	dt = LRC.q(Math.max(-ok.t, dt));
 	const k = ln.tokens[h.ti];
+	liftTok = k;
 	k.t = LRC.q(ok.t + dt);
+	const len = drag.b0 != null ? Math.max(0.1, drag.b0 - ok.t) : 0.3;
+	if ((pt != null && k.t < pt + 0.05) || (nt != null && k.t > nt - 0.05)) {    // over a neighbour: lifted, own length
+		k.end = LRC.q(k.t + len);
+		return;
+	}
 	if (prev && prev.end != null && prev.end > k.t) ln.tokens[h.ti - 1].end = k.t;
 	if (drag.b0 == null) return;
 	const e = LRC.q(drag.b0 + dt);
@@ -1993,27 +2026,13 @@ function moveWord(h, dt) {
 	k.end = e < nt && e > k.t + 0.02 ? e : null;
 }
 
-// a line box dragged sideways: all its times move together, it stops at the lines before and after it, and it
-// loops meanwhile so you hear where it sits. A click without moving marks the line (its first problem) as before.
+// a line box dragged sideways: all its times move together; pushed over the lines before or after it, it lies a
+// level up (see overlapLines) until there is room. It loops meanwhile so you hear where it sits. A click without moving marks the line (its first problem) as before.
 function dragLine(li, x0) {
 	const ln = doc.lines[li], o = JSON.parse(JSON.stringify(ln)), W = tl.clientWidth;
 	const times = [o.t, ...o.tokens.flatMap(k => [k.t, k.end])].filter(t => t != null);
 	let lo = times.length ? -Math.min(...times) : 0, hi = Infinity;
-	if (times.length && !LRC.isBg(ln)) {
-		const main = i => doc.lines[i] && !doc.lines[i].brk && !LRC.isBg(doc.lines[i]);
-		for (let i = li - 1; i >= 0; i--) {
-			if (!main(i)) continue;
-			const ts = doc.lines[i].tokens.flatMap(k => [k.t, k.end]).filter(t => t != null);
-			if (ts.length) { lo = Math.max(lo, Math.max(...ts) + 0.05 - Math.min(...times)); break; }
-		}
-		for (let i = li + 1; i < doc.lines.length; i++) {
-			if (!main(i)) continue;
-			const t = LRC.lineTime(doc.lines[i]);
-			if (t != null) { hi = t - 0.05 - Math.max(...times); break; }
-		}
-		lo = Math.min(lo, 0);                     // already overlapping: it never jumps, it only cannot get worse
-		hi = Math.max(hi, 0);
-	}
+	liftLine = ln;
 	const z0 = edit && edit.zone ? {...edit.zone} : null;
 	drag = {x0, start0: view.start, line: li, moved: false, undo: false};
 	const move = ev => {
@@ -2100,6 +2119,7 @@ tl.addEventListener('mousedown', e => {
 	const k0 = hit && doc.lines[hit.li].tokens[hit.ti];
 	const last0 = hit && hit.ti === doc.lines[hit.li].tokens.length - 1;
 	drag = {x0: x, start0: view.start, hit, zoneEdge, moved: false, undo: false, ctrl: e.ctrlKey || e.metaKey,
+		w0: k0 ? {t: k0.t, end: k0.end} : null,
 		t0: k0 ? k0.t : null, e0: k0 ? (k0.end != null ? k0.end : last0 && sugg.has(hit.li) ? sugg.get(hit.li) : null) : null};
 	if (hit && hit.body) {
 		drag.w = JSON.parse(JSON.stringify(doc.lines[hit.li].tokens));
@@ -2123,7 +2143,12 @@ tl.addEventListener('mousedown', e => {
 			if (!drag.undo) { pushUndo(); drag.undo = true; }
 			const h = drag.hit, k = doc.lines[h.li].tokens[h.ti];
 			if (h.body) moveWord(h, (xx - drag.x0) / W * view.span);
-			else if (h.end) k.end = t; else k.t = t;
+			else if (h.end) k.end = Math.max(t, LRC.q(k.t + 0.05));
+			else {
+				const o = drag.w0;
+				k.t = t;
+				if (o.end != null) k.end = Math.max(o.end, LRC.q(t + Math.max(0.05, o.end - o.t)));    // the end stays behind it
+			}
 			recalc();
 			dragSnip(doc.lines[h.li].tokens[h.ti].t);
 		} else {
@@ -2173,7 +2198,6 @@ function sameTimeGroup(li, ti) {
 // a stack fanned out: each word gets a length by its text, the rest of the line (and its end) moves along so all
 // stays in one row. Where there is more room up to the next word, the words share it. If the line now runs into the
 // next one, it is the fanned line that gets lifted (see overlapLines), the next line stays where it is.
-const liftFirst = new WeakSet();
 function fanOut(li, ti) {
 	const s = sameTimeGroup(li, ti);
 	if (!s) return false;
@@ -2201,7 +2225,7 @@ function fanOut(li, ti) {
 			if (k.end != null) k.end = LRC.q(k.end + sh);
 		}
 	} else lk.end = LRC.q(t0 + span);               // the line end sits right after the last word
-	for (const e of g) liftFirst.add(doc.lines[e.li]);
+	liftLine = ln;
 	changed();
 	return true;
 }
