@@ -613,6 +613,7 @@ function endSnip(s) {
 		audio.pause();
 		gain(1);
 		seek(s.t);
+		if (drag && drag.snipT != null) audition(drag.snipT);    // box still held: play it again, where it is now
 	}, 40);
 }
 
@@ -1837,11 +1838,12 @@ function tlCursor(x, y) {
 	return b && open(b.li) ? 'grab' : '';
 }
 
-// while a box (word, word edge, line) is dragged, its start plays briefly like a right click whenever the mouse
-// rests, and once more when it is let go
+// while a box (word, word edge, line) is dragged, its start plays briefly like a right click once the mouse
+// rests, then again and again from where the box is now until the button is let go, and once more after that
 let dragSnipTimer = 0;
 function dragSnip(t, now = false) {
 	clearTimeout(dragSnipTimer);
+	if (drag) drag.snipT = t;
 	if (t == null || !audio.src) return;
 	if (now) audition(t); else dragSnipTimer = setTimeout(() => { if (drag) audition(t); }, 140);
 }
