@@ -1420,6 +1420,18 @@ function overlapLines() {
 // a lifted line box under the mouse
 const liftAt = (x, y) => lanes.find(l => l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
 
+// a small timeline label on a dark backdrop, so it reads over the waveform and the marks
+function tag(ctx, s, x, y, col, bold = false) {
+	ctx.font = (bold ? 'bold ' : '') + '10px ' + UI_FONT;
+	const w = ctx.measureText(s).width;
+	ctx.fillStyle = C.ink;
+	ctx.globalAlpha = 0.85;
+	ctx.fillRect(x - 2, y - 10, w + 4, 13);
+	ctx.globalAlpha = 1;
+	ctx.fillStyle = col;
+	ctx.fillText(s, x, y);
+}
+
 function drawTimeline(now) {
 	const [ctx, W, H] = fitCanvas($('timeline'), LANE_Y + 42);
 	if (!audio.paused && $('follow').checked && !drag && (!snip || snip.hold) && !loop) view.start = Math.max(0, now - view.span * 0.25);
@@ -1457,21 +1469,25 @@ function drawTimeline(now) {
 	// line boxes under the words, one per line from start to end: marked line in the cursor colour, lines with
 	// errors red / orange, the rest grey; background vocals as a thin bar below. A line that starts before the line
 	// before it ends (same rule as the check) is lifted above the words and glows red until it fits again.
-	const lift = overlapLines();
+	const lift = overlapLines(), lifted = [];
 	lanes = [];
-	doc.lines.forEach((ln, li) => {
+	const drawLane = (ln, li, up) => {
 		const r = lineRange(li);
 		if (!r || r.b < t0 || r.a > t0 + sp) return;
-		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li), up = lift.has(li);
+		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li);
 		const x0 = X(r.a), x1 = X(r.b), y = up ? LANE_Y + LIFT_DY : bg ? LANE_Y + 21 : LANE_Y, h = bg ? 6 : 19;
-		const col = cur ? C.cursor : up || bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
+		const col = up ? C.err : cur ? C.cursor : bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
+		if (up) {                                    // solid, so the word lines and the waveform do not run through it
+			ctx.fillStyle = C.ink;
+			ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
+		}
 		ctx.fillStyle = up ? C.err : col;
-		ctx.globalAlpha = up ? 0.3 : cur ? 0.25 : 0.1;
+		ctx.globalAlpha = up ? 0.35 : cur ? 0.25 : 0.1;
 		ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
 		ctx.globalAlpha = 1;
 		ctx.strokeStyle = col;
-		ctx.lineWidth = cur || up ? 2 : 1;
-		if (up) { ctx.shadowColor = C.err; ctx.shadowBlur = 10; }
+		ctx.lineWidth = up ? 3 : cur ? 2 : 1;
+		if (up) { ctx.shadowColor = C.err; ctx.shadowBlur = 14; }
 		ctx.strokeRect(x0 + 0.5, y + 0.5, Math.max(2, x1 - x0 - 2), h - 1);
 		ctx.shadowBlur = 0;
 		ctx.lineWidth = 1;
@@ -1480,13 +1496,14 @@ function drawTimeline(now) {
 			ctx.beginPath();
 			ctx.rect(x0 + 3, y, Math.max(0, x1 - x0 - 6), h);
 			ctx.clip();
-			ctx.font = (cur ? 'bold ' : '') + '11px ' + UI_FONT;
-			ctx.fillStyle = cur ? C.cursor : C.text;
+			ctx.font = (cur || up ? 'bold ' : '') + '11px ' + UI_FONT;
+			ctx.fillStyle = cur ? C.cursor : up ? C.textHi : C.text;
 			ctx.fillText((loop && loop.kind === 'line' && loop.li === li ? '↻ ' : '') + (li + 1) + '  ' + LRC.lineText(ln, false).replace(/\|/g, ''), x0 + 4, y + 13);
 			ctx.restore();
 		}
 		lanes.push({x0, x1, y, h, li, up});
-	});
+	};
+	doc.lines.forEach((ln, li) => { if (lift.has(li)) lifted.push(li); else drawLane(ln, li, false); });
 
 	// waveform
 	if (peaks) {
@@ -1511,8 +1528,9 @@ function drawTimeline(now) {
 	}
 
 	// line starts of lines without placed words (plain LRC)
-	ctx.strokeStyle = C.lane;
-	ctx.setLineDash([3, 3]);
+	ctx.strokeStyle = C.mark;
+	ctx.lineWidth = 1.5;
+	ctx.setLineDash([5, 4]);
 	doc.lines.forEach(ln => {
 		if (ln.t != null && (!ln.tokens.length || ln.tokens[0].t == null) && ln.t >= t0 && ln.t <= t0 + sp) {
 			ctx.beginPath();
@@ -1522,6 +1540,7 @@ function drawTimeline(now) {
 		}
 	});
 	ctx.setLineDash([]);
+	ctx.lineWidth = 1;
 
 	// words: bar from start to end, mark line, label
 	marks = [];
@@ -1546,20 +1565,22 @@ function drawTimeline(now) {
 		const isSel = sel && !sel.end && sel.li === e.li && sel.ti === e.ti;
 		const sung = now >= e.k.t;
 		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : sung ? C.sung : C.lane;
-		const stack = lvl[n] > 0, bh = bgw ? 9 : 14;
-		let by = bgw ? LANE_Y - 33 : LANE_Y - 21, bw = Math.max(2, xe - x - 1);
+		const stack = lvl[n] > 0;
+		let bh = bgw ? 9 : 14, by = bgw ? LANE_Y - 33 : LANE_Y - 21, bw = Math.max(2, xe - x - 1);
 		if (stack) {
 			let hi = lvl[n];
 			for (let j = n - 1; j >= 0 && Math.abs(vis[j].k.t - e.k.t) < 0.005; j--) hi = Math.max(hi, lvl[j]);
-			by -= lvl[n] * Math.min(bh + 3, (by - 2) / hi);    // a high stack is squeezed so it stays on screen
-			ctx.font = '10px ' + UI_FONT;
+			const step = Math.min(bh + 3, (by - 2) / hi);       // a high stack is squeezed so it stays on screen
+			by -= lvl[n] * step;
+			bh = Math.max(2, Math.min(bh, step - 1));
+			ctx.font = 'bold 10px ' + UI_FONT;
 			bw = Math.max(bw, 24, ctx.measureText(e.k.text).width + 8);
 		}
-		ctx.globalAlpha = stack ? 0.85 : 0.55;
+		ctx.globalAlpha = stack ? 0.9 : 0.55;
 		ctx.fillRect(x, by, bw, bh);
 		ctx.globalAlpha = 1;
-		if (stack) {
-			ctx.fillStyle = C.textHi;
+		if (stack && bh >= 12) {
+			ctx.fillStyle = C.ink;
 			ctx.fillText(e.k.text, x + 4, by + bh - 3);
 		}
 		if (isSel || (loop && loop.kind === 'word' && loop.li === e.li && loop.ti === e.ti)) {
@@ -1572,15 +1593,17 @@ function drawTimeline(now) {
 		if (sg) {                                    // missing line end: suggested end, dashed, can be dragged
 			const isSelE = sel && sel.end && sel.li === e.li && sel.ti === e.ti;
 			ctx.strokeStyle = isSelE ? C.cursor : C.warn;
-			ctx.setLineDash([3, 3]);
+			ctx.lineWidth = 2;
+			ctx.setLineDash([6, 4]);
 			ctx.beginPath();
-			ctx.moveTo(xe + 0.5, 40);
-			ctx.lineTo(xe + 0.5, LANE_Y - 3);
+			ctx.moveTo(xe, 40);
+			ctx.lineTo(xe, LANE_Y - 3);
 			ctx.stroke();
 			ctx.setLineDash([]);
-			ctx.font = '10px ' + UI_FONT;
+			ctx.lineWidth = 1;
 			ctx.fillStyle = isSelE ? C.cursor : C.warn;
-			ctx.fillText('Ende?', xe + 3, 52);
+			ctx.fillRect(xe - 4, LANE_Y - 9, 8, 6);             // grip like a real end mark
+			tag(ctx, 'Ende?', xe + 4, 52, isSelE ? C.cursor : C.warn, true);
 			marks.push({x: xe, li: e.li, ti: e.ti, end: true, sugg: true});
 		}
 		ctx.fillStyle = isSel ? C.cursor : lv === 'err' ? C.err : e.ti === 0 ? C.textHi : C.mark;
@@ -1606,8 +1629,7 @@ function drawTimeline(now) {
 			ctx.fillStyle = isSelE ? C.cursor : le === 'err' ? C.err : C.ok;
 			ctx.fillRect(xm - (isSelE ? 1 : 0), 40, isSelE ? 3 : 1, LANE_Y - 45);
 			ctx.fillRect(xm - 4, LANE_Y - 9, 8, 6);
-			ctx.font = '10px ' + UI_FONT;
-			ctx.fillText(last ? 'Ende' : 'Pause', xm + 3, 52);
+			tag(ctx, last ? 'Ende' : 'Pause', xm + 4, 52, isSelE ? C.cursor : le === 'err' ? C.err : C.ok, true);
 			marks.push({x: xm, li: e.li, ti: e.ti, end: true});
 		}
 	});
@@ -1638,12 +1660,29 @@ function drawTimeline(now) {
 		ctx.fillText(label, bx + 6, by + 11);
 		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
 	}
+	// lifted line boxes last, on top of the words
+	for (const li of lifted) drawLane(doc.lines[li], li, true);
+
+	const hb = hoverX != null && hoverY != null && !fanAt(hoverX, hoverY) && bodyAt(hoverX, hoverY);
+	if (hb && hb.stack) {
+		const k = doc.lines[hb.li].tokens[hb.ti];
+		ctx.font = 'bold 12px ' + UI_FONT;
+		const s = k.text + '  ' + LRC.fmt(k.t).slice(3), w = ctx.measureText(s).width + 12;
+		const bx = Math.min(W - w - 2, hoverX + 12), by = Math.max(1, hoverY - 22);
+		ctx.fillStyle = C.ink;
+		ctx.fillRect(bx, by, w, 18);
+		ctx.strokeStyle = C.err;
+		ctx.strokeRect(bx + 0.5, by + 0.5, w - 1, 17);
+		ctx.fillStyle = C.textHi;
+		ctx.fillText(s, bx + 6, by + 13);
+	}
 
 	// old marks of words still to re-tap in a repair
 	if (repair) {
-		ctx.setLineDash([2, 4]);
-		ctx.strokeStyle = C.dim;
-		ctx.fillStyle = C.dim;
+		ctx.setLineDash([4, 4]);
+		ctx.lineWidth = 1.5;
+		ctx.strokeStyle = C.mark;
+		ctx.fillStyle = C.mark;
 		ctx.font = '11px ' + UI_FONT;
 		for (const [key, g] of repair.ghost) {
 			const [li, ti] = key.split(':').map(Number);
@@ -1656,6 +1695,7 @@ function drawTimeline(now) {
 			ctx.fillText(k.text, X(g.t) + 3, 44);
 		}
 		ctx.setLineDash([]);
+		ctx.lineWidth = 1;
 	}
 
 	// playhead
