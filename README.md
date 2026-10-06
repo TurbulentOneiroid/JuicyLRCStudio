@@ -20,10 +20,10 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - **Loop-Modus** (↻ neben ▶): die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen; aus = ganzen Track hören
 - Zeile bearbeiten oder reparieren mit **Loop-Box** (Vorlauf einstellbar, die Wiedergabe bleibt in der Box)
 - Wörter in der Zeitleiste ziehen (Box = verschieben, nach rechts wird sie kürzer, Kanten = länger / kürzer) und ganze Zeilen
-  an ihrer Box verschieben,
+  an ihrer Box verschieben (überlappt eine Zeile die davor, liegt ihre Box rot leuchtend eine Ebene höher, bis wieder Platz ist),
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau.
   Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen,
-  Doppelklick fächert sie über die Länge der Box auf (je nach Textlänge)
+  der Knopf „⇔ auffächern“ darüber (oder Doppelklick) legt sie bis zum nächsten späteren Wort nebeneinander, auch über Zeilen hinweg (je nach Textlänge)
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
 - Seitenleiste (Song, Prüfung, Original-Abgleich) neben den Wörtern: mit ⇆ links oder rechts

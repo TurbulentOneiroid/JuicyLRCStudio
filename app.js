@@ -27,10 +27,12 @@ let repair = null;              // {lines, ghost: 'li:ti' -> old {t, end}, done:
 let version = 0;                // bumps on every change, the preview rebuilds on it
 let marks = [];                 // timeline hit boxes of the last frame: start / end marks
 let bodies = [];                // ... and word boxes {x0, x1, y0, y1, li, ti}
+let fanBtns = [];               // ... and the "fan out" buttons over stacks {x0, x1, y0, y1, li, ti}
 let drag = null;
 let origin = null;              // snapshot as loaded / created: Zurücksetzen goes back to it
 let edit = null;                // {li, before, free}: the one line being edited (B ... OK / Abbrechen), see startEdit
 let hoverX = null;              // mouse x over the timeline
+let hoverY = null;              // ... and y
 let blade = false;              // ✂ on: a click into the timeline cuts the line there, see cutLine
 let pvH = 96;                   // lyrics preview height, splitter under it, see setPvH
 let snip = null;                // short audition running: {t, timer}
@@ -1100,6 +1102,8 @@ function setBlade(on) {
 
 // the line box at timeline x (and y, if it is in the line box row); main lines before background vocals
 function lineAtX(x, y) {
+	const u = y != null && liftAt(x, y);
+	if (u) return u.li;
 	if (y != null && y >= LANE_Y - 1) {
 		const b = lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
 		if (b) return b.li;
@@ -1396,6 +1400,25 @@ const UI_FONT = '"Segoe UI Variable Text", -apple-system, "SF Pro Text", Inter, 
 let LANE_Y = 137;               // timeline: words and waveform above, line boxes from here, seconds at the bottom;
                                 // grows with the timeline height (splitter under it, see setTlH)
 
+const LIFT_DY = -44;             // a lifted (overlapping) line box: this far above the line box row, over the words
+
+// main lines that start before the line before them ends: the 'overlap' rule of LRC.check, worked out live while dragging
+function overlapLines() {
+	const out = new Set();
+	let pe = null;
+	doc.lines.forEach((ln, li) => {
+		if (ln.brk || !ln.tokens.length || LRC.isBg(ln)) return;
+		const t = ln.tokens[0].t;
+		if (t != null && pe != null && t < pe - 0.005) out.add(li);
+		const last = ln.tokens[ln.tokens.length - 1];
+		if (last.end != null) pe = last.end;
+	});
+	return out;
+}
+
+// a lifted line box under the mouse
+const liftAt = (x, y) => lanes.find(l => l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
+
 function drawTimeline(now) {
 	const [ctx, W, H] = fitCanvas($('timeline'), LANE_Y + 42);
 	if (!audio.paused && $('follow').checked && !drag && (!snip || snip.hold) && !loop) view.start = Math.max(0, now - view.span * 0.25);
@@ -1431,21 +1454,25 @@ function drawTimeline(now) {
 	}
 
 	// line boxes under the words, one per line from start to end: marked line in the cursor colour, lines with
-	// errors red / orange, the rest grey; background vocals as a thin bar below
+	// errors red / orange, the rest grey; background vocals as a thin bar below. A line that starts before the line
+	// before it ends (same rule as the check) is lifted above the words and glows red until it fits again.
+	const lift = overlapLines();
 	lanes = [];
 	doc.lines.forEach((ln, li) => {
 		const r = lineRange(li);
 		if (!r || r.b < t0 || r.a > t0 + sp) return;
-		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li);
-		const x0 = X(r.a), x1 = X(r.b), y = bg ? LANE_Y + 21 : LANE_Y, h = bg ? 6 : 19;
-		const col = cur ? C.cursor : bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
-		ctx.fillStyle = col;
-		ctx.globalAlpha = cur ? 0.25 : 0.1;
+		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li), up = lift.has(li);
+		const x0 = X(r.a), x1 = X(r.b), y = up ? LANE_Y + LIFT_DY : bg ? LANE_Y + 21 : LANE_Y, h = bg ? 6 : 19;
+		const col = cur ? C.cursor : up || bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
+		ctx.fillStyle = up ? C.err : col;
+		ctx.globalAlpha = up ? 0.3 : cur ? 0.25 : 0.1;
 		ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
 		ctx.globalAlpha = 1;
 		ctx.strokeStyle = col;
-		ctx.lineWidth = cur ? 2 : 1;
+		ctx.lineWidth = cur || up ? 2 : 1;
+		if (up) { ctx.shadowColor = C.err; ctx.shadowBlur = 10; }
 		ctx.strokeRect(x0 + 0.5, y + 0.5, Math.max(2, x1 - x0 - 2), h - 1);
+		ctx.shadowBlur = 0;
 		ctx.lineWidth = 1;
 		if (!bg) {
 			ctx.save();
@@ -1457,7 +1484,7 @@ function drawTimeline(now) {
 			ctx.fillText((loop && loop.kind === 'line' && loop.li === li ? '↻ ' : '') + (li + 1) + '  ' + LRC.lineText(ln, false).replace(/\|/g, ''), x0 + 4, y + 13);
 			ctx.restore();
 		}
-		lanes.push({x0, x1, y, h, li});
+		lanes.push({x0, x1, y, h, li, up});
 	});
 
 	// waveform
@@ -1521,7 +1548,9 @@ function drawTimeline(now) {
 		const stack = lvl[n] > 0, bh = bgw ? 9 : 14;
 		let by = bgw ? LANE_Y - 33 : LANE_Y - 21, bw = Math.max(2, xe - x - 1);
 		if (stack) {
-			by -= lvl[n] * (bh + 3);
+			let hi = lvl[n];
+			for (let j = n - 1; j >= 0 && Math.abs(vis[j].k.t - e.k.t) < 0.005; j--) hi = Math.max(hi, lvl[j]);
+			by -= lvl[n] * Math.min(bh + 3, (by - 2) / hi);    // a high stack is squeezed so it stays on screen
 			ctx.font = '10px ' + UI_FONT;
 			bw = Math.max(bw, 24, ctx.measureText(e.k.text).width + 8);
 		}
@@ -1581,6 +1610,33 @@ function drawTimeline(now) {
 			marks.push({x: xm, li: e.li, ti: e.ti, end: true});
 		}
 	});
+
+	// a button over every stack of same-time words: one click lays them out side by side
+	fanBtns = [];
+	const tops = new Map();
+	for (const o of bodies) {
+		if (!o.stack) continue;
+		const key = (LRC.isBg(doc.lines[o.li]) ? 'b' : 'm') + doc.lines[o.li].tokens[o.ti].t;
+		const c = tops.get(key);
+		if (!c) tops.set(key, {o, n: 2});
+		else { c.n++; if (o.y0 < c.o.y0) c.o = o; }
+	}
+	ctx.font = 'bold 10px ' + UI_FONT;
+	for (const {o, n} of tops.values()) {
+		const label = '⇔ ' + n + ' Wörter auffächern', bw = ctx.measureText(label).width + 12, bh = 15;
+		let bx = o.x0, by = o.y0 - bh - 2;
+		if (by < 1) { bx = o.x1 + 4; by = Math.max(1, o.y0); }    // no room above a squeezed stack: beside it
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.accent;
+		ctx.globalAlpha = hov ? 1 : 0.88;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
+	}
 
 	// old marks of words still to re-tap in a repair
 	if (repair) {
@@ -1834,14 +1890,17 @@ const tlTime = x => LRC.q(Math.max(0, view.start + x / tl.clientWidth * view.spa
 tl.addEventListener('contextmenu', e => e.preventDefault());
 tl.addEventListener('mousemove', e => {
 	hoverX = e.offsetX;
+	hoverY = e.offsetY;
 	if (!drag) tl.style.cursor = blade ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
 });
 
 // what a press would do here: edges resize (ew-resize), word and line boxes move (grab), else the CSS default
 function tlCursor(x, y) {
 	const open = li => !edit || edit.li === li;
-	if (y >= LANE_Y - 1) {
-		const b = lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
+	if (fanAt(x, y)) return 'pointer';
+	const u = liftAt(x, y);
+	if (u || y >= LANE_Y - 1) {
+		const b = u || lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
 		return b && open(b.li) ? 'grab' : '';
 	}
 	if (edit && edit.zone) {
@@ -1949,7 +2008,7 @@ function dragLine(li, x0) {
 	window.addEventListener('mousemove', move);
 	window.addEventListener('mouseup', up);
 }
-tl.addEventListener('mouseleave', () => { hoverX = null; });
+tl.addEventListener('mouseleave', () => { hoverX = null; hoverY = null; });
 tl.addEventListener('mousedown', e => {
 	const x = e.offsetX, y = e.offsetY;
 	if (e.button === 2) {                        // right button: plays while held, a click plays snipLen
@@ -1958,9 +2017,12 @@ tl.addEventListener('mousedown', e => {
 	}
 	if (e.button !== 0) return;
 	if (blade) { cutLine(lineAtX(x, y), tlTime(x)); return; }
-	if (y >= LANE_Y - 1) {                       // line box: click = mark that line, drag = move the whole line
-		const b = lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
-			lanes.find(l => x >= l.x0 && x <= l.x1);
+	const fb = fanAt(x, y);
+	if (fb) { fanClick(fb); return; }
+	const u = liftAt(x, y);
+	if (u || y >= LANE_Y - 1) {                  // line box: click = mark that line, drag = move the whole line
+		const b = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
+			lanes.find(l => !l.up && x >= l.x0 && x <= l.x1);
 		if (b && edit && b.li !== edit.li) lockedHint();
 		else if (b) dragLine(b.li, x);
 		return;
@@ -2054,49 +2116,64 @@ tl.addEventListener('mousedown', e => {
 	window.addEventListener('mouseup', up);
 });
 
-// words of a line that start at the same time as word ti (the stack it sits in), as [first, last] index
+// words that start at the same time as word ti, also across lines (main and background vocals apart): the stack it
+// sits in, as entries of timed in order
 function sameTimeGroup(li, ti) {
-	const tk = doc.lines[li].tokens, t = tk[ti].t;
-	if (t == null) return null;
-	let a = ti, b = ti;
-	while (a > 0 && tk[a - 1].t != null && Math.abs(tk[a - 1].t - t) < 0.005) a--;
-	while (b < tk.length - 1 && tk[b + 1].t != null && Math.abs(tk[b + 1].t - t) < 0.005) b++;
-	return b > a ? [a, b] : null;
+	const bg = LRC.isBg(doc.lines[li]), row = timed.filter(e => LRC.isBg(doc.lines[e.li]) === bg);
+	const n = row.findIndex(e => e.li === li && e.ti === ti);
+	if (n < 0) return null;
+	const t = row[n].k.t, same = e => Math.abs(e.k.t - t) < 0.005;
+	let a = n, b = n;
+	while (a > 0 && same(row[a - 1])) a--;
+	while (b < row.length - 1 && same(row[b + 1])) b++;
+	return b > a ? {g: row.slice(a, b + 1), next: row[b + 1] || null} : null;
 }
 
-// a stack fanned out: its words share the time of the box that really runs, each by the length of its text
+// a stack fanned out: its words share the time up to the next later word (or the end of the last one), each by the
+// length of its text
 function fanOut(li, ti) {
-	const g = sameTimeGroup(li, ti);
-	if (!g) return false;
-	const [a, b] = g, tk = doc.lines[li].tokens, t0 = tk[a].t, n = b - a + 1;
-	let t1 = boxEnd(li, b);
+	const s = sameTimeGroup(li, ti);
+	if (!s) return false;
+	const {g, next} = s, t0 = g[0].k.t, n = g.length, lk = g[n - 1].k;
+	let t1 = lk.end != null && lk.end > t0 + 0.005 ? lk.end : next ? next.k.t : boxEnd(g[n - 1].li, g[n - 1].ti);
 	if (t1 == null || t1 - t0 < 0.05 * n) t1 = t0 + 0.25 * n;    // no room to share: a short default per word
-	const wt = tk.slice(a, b + 1).map(k => Math.max(1, k.text.trim().length));
-	const sum = wt.reduce((s, w) => s + w, 0);
+	const wt = g.map(e => Math.max(1, e.k.text.trim().length));
+	const sum = wt.reduce((x, w) => x + w, 0);
 	pushUndo();
 	let acc = 0;
-	for (let i = a; i <= b; i++) {
-		tk[i].t = LRC.q(t0 + (t1 - t0) * acc / sum);
-		if (i < b) tk[i].end = null;          // the box ends where the next word starts
-		acc += wt[i - a];
-	}
+	g.forEach((e, i) => {
+		e.k.t = LRC.q(t0 + (t1 - t0) * acc / sum);
+		if (i < n - 1 && e.k.end != null && e.k.end <= e.k.t + 0.02) e.k.end = null;    // zero-length end: the box runs on
+		acc += wt[i];
+	});
 	changed();
 	return true;
 }
 
+const fanAt = (x, y) => fanBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
+
+// fan out the stack word b sits in (button or double click); a stack reaching into a locked line stays
+function fanClick(b) {
+	const s = sameTimeGroup(b.li, b.ti);
+	if (!s) return;
+	if (edit && s.g.some(e => !editing(e.li))) { lockedHint(); return; }
+	if (fanOut(b.li, b.ti)) {
+		setSel({li: b.li, ti: b.ti, end: false});
+		audition(doc.lines[b.li].tokens[b.ti].t);    // the clicked word, now at its own time
+	}
+}
+
 tl.addEventListener('dblclick', e => {
 	const x = e.offsetX, y = e.offsetY;
+	if (fanAt(x, y)) return;                      // the button already did it on the first click
+	const u = liftAt(x, y);
+	if (u) { startEdit(u.li); return; }
 	if (y < LANE_Y - 1) {                         // double click on a stack: fan it out
 		const b = bodyAt(x, y);
-		if (!b || !sameTimeGroup(b.li, b.ti)) return;
-		if (edit && !editing(b.li)) { lockedHint(); return; }
-		if (fanOut(b.li, b.ti)) {
-			setSel({li: b.li, ti: b.ti, end: false});
-			audition(doc.lines[b.li].tokens[b.ti].t);    // the clicked word, now at its own time
-		}
+		if (b) fanClick(b);
 		return;
 	}
-	const b = lanes.find(l => x >= l.x0 && x <= l.x1);    // double click on a line box: open it
+	const b = lanes.find(l => !l.up && x >= l.x0 && x <= l.x1);    // double click on a line box: open it
 	if (b) startEdit(b.li);
 });
 
