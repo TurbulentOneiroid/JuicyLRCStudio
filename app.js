@@ -2054,9 +2054,49 @@ tl.addEventListener('mousedown', e => {
 	window.addEventListener('mouseup', up);
 });
 
-tl.addEventListener('dblclick', e => {           // double click on a line box: open it
-	if (e.offsetY < LANE_Y - 1) return;
-	const b = lanes.find(l => e.offsetX >= l.x0 && e.offsetX <= l.x1);
+// words of a line that start at the same time as word ti (the stack it sits in), as [first, last] index
+function sameTimeGroup(li, ti) {
+	const tk = doc.lines[li].tokens, t = tk[ti].t;
+	if (t == null) return null;
+	let a = ti, b = ti;
+	while (a > 0 && tk[a - 1].t != null && Math.abs(tk[a - 1].t - t) < 0.005) a--;
+	while (b < tk.length - 1 && tk[b + 1].t != null && Math.abs(tk[b + 1].t - t) < 0.005) b++;
+	return b > a ? [a, b] : null;
+}
+
+// a stack fanned out: its words share the time of the box that really runs, each by the length of its text
+function fanOut(li, ti) {
+	const g = sameTimeGroup(li, ti);
+	if (!g) return false;
+	const [a, b] = g, tk = doc.lines[li].tokens, t0 = tk[a].t, n = b - a + 1;
+	let t1 = boxEnd(li, b);
+	if (t1 == null || t1 - t0 < 0.05 * n) t1 = t0 + 0.25 * n;    // no room to share: a short default per word
+	const wt = tk.slice(a, b + 1).map(k => Math.max(1, k.text.trim().length));
+	const sum = wt.reduce((s, w) => s + w, 0);
+	pushUndo();
+	let acc = 0;
+	for (let i = a; i <= b; i++) {
+		tk[i].t = LRC.q(t0 + (t1 - t0) * acc / sum);
+		if (i < b) tk[i].end = null;          // the box ends where the next word starts
+		acc += wt[i - a];
+	}
+	changed();
+	return true;
+}
+
+tl.addEventListener('dblclick', e => {
+	const x = e.offsetX, y = e.offsetY;
+	if (y < LANE_Y - 1) {                         // double click on a stack: fan it out
+		const b = bodyAt(x, y);
+		if (!b || !sameTimeGroup(b.li, b.ti)) return;
+		if (edit && !editing(b.li)) { lockedHint(); return; }
+		if (fanOut(b.li, b.ti)) {
+			setSel({li: b.li, ti: b.ti, end: false});
+			audition(doc.lines[b.li].tokens[b.ti].t);    // the clicked word, now at its own time
+		}
+		return;
+	}
+	const b = lanes.find(l => x >= l.x0 && x <= l.x1);    // double click on a line box: open it
 	if (b) startEdit(b.li);
 });
 

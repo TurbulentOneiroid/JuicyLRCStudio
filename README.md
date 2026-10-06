@@ -22,7 +22,8 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - Wörter in der Zeitleiste ziehen (Box = verschieben, nach rechts wird sie kürzer, Kanten = länger / kürzer) und ganze Zeilen
   an ihrer Box verschieben,
   ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau.
-  Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen
+  Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen,
+  Doppelklick fächert sie über die Länge der Box auf (je nach Textlänge)
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
 - Seitenleiste (Song, Prüfung, Original-Abgleich) neben den Wörtern: mit ⇆ links oder rechts
