@@ -19,8 +19,10 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - Wörter mit der Maus setzen (Rechtsklick = anhören, rechte Taste halten = weiterhören bis zum Loslassen, Linksklick = setzen) oder mit der Leertaste mittippen
 - **Loop-Modus** (↻ neben ▶): die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen; aus = ganzen Track hören
 - Zeile bearbeiten oder reparieren mit **Loop-Box** (Vorlauf einstellbar, die Wiedergabe bleibt in der Box)
-- Wörter in der Zeitleiste ziehen (Box = verschieben, Kanten = länger / kürzer) und ganze Zeilen an ihrer Box verschieben,
-  ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau
+- Wörter in der Zeitleiste ziehen (Box = verschieben, nach rechts wird sie kürzer, Kanten = länger / kürzer) und ganze Zeilen
+  an ihrer Box verschieben,
+  ohne Bestätigen; dabei spielt der Anfang der Box kurz an, solange die Maus gedrückt ist immer wieder, so sitzt jede Grenze genau.
+  Wörter mit derselben Zeit (rot) liegen gestapelt übereinander und lassen sich einzeln anfassen
 - Zeilenenden (`Ende`), Pausen, Silben (`Lie|be`), mehrere Stimmen (`v1:`, `F:`, `bg:` …)
 - Prüfung: gleiche Zeiten, zu lange Wörter, fehlende Zeilenenden (mit Vorschlag)
 - Seitenleiste (Song, Prüfung, Original-Abgleich) neben den Wörtern: mit ⇆ links oder rechts

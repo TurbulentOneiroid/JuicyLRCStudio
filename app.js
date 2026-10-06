@@ -1502,6 +1502,12 @@ function drawTimeline(now) {
 		return (end != null ? end : e.k.t) >= t0 - 1 && e.k.t <= t0 + sp + 1;
 	});
 	const lane = e => LRC.isBg(doc.lines[e.li]) ? 1 : 0;
+	// words starting at the same time (red, no length) stack above the one that really runs, so each can be grabbed
+	const lvl = vis.map((e, n) => {
+		let l = 0;
+		for (let j = n + 1; j < vis.length && Math.abs(vis[j].k.t - e.k.t) < 0.005; j++) if (lane(vis[j]) === lane(e)) l++;
+		return l;
+	});
 	bodies = [];
 	vis.forEach((e, n) => {
 		const bgw = lane(e) === 1, ly = bgw ? 44 : 0;      // background vocals: second label row, upper bar
@@ -1512,17 +1518,27 @@ function drawTimeline(now) {
 		const isSel = sel && !sel.end && sel.li === e.li && sel.ti === e.ti;
 		const sung = now >= e.k.t;
 		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : sung ? C.sung : C.lane;
-		const by = bgw ? LANE_Y - 33 : LANE_Y - 21, bh = bgw ? 9 : 14;
-		ctx.globalAlpha = 0.55;
-		ctx.fillRect(x, by, Math.max(2, xe - x - 1), bh);
+		const stack = lvl[n] > 0, bh = bgw ? 9 : 14;
+		let by = bgw ? LANE_Y - 33 : LANE_Y - 21, bw = Math.max(2, xe - x - 1);
+		if (stack) {
+			by -= lvl[n] * (bh + 3);
+			ctx.font = '10px ' + UI_FONT;
+			bw = Math.max(bw, 24, ctx.measureText(e.k.text).width + 8);
+		}
+		ctx.globalAlpha = stack ? 0.85 : 0.55;
+		ctx.fillRect(x, by, bw, bh);
 		ctx.globalAlpha = 1;
+		if (stack) {
+			ctx.fillStyle = C.textHi;
+			ctx.fillText(e.k.text, x + 4, by + bh - 3);
+		}
 		if (isSel || (loop && loop.kind === 'word' && loop.li === e.li && loop.ti === e.ti)) {
 			ctx.strokeStyle = C.cursor;
 			ctx.lineWidth = 2;
-			ctx.strokeRect(x + 1, by - 1, Math.max(2, xe - x - 2), bh + 2);
+			ctx.strokeRect(x + 1, by - 1, Math.max(2, bw - 1), bh + 2);
 			ctx.lineWidth = 1;
 		}
-		bodies.push({x0: x, x1: xe, y0: by - 4, y1: by + bh + 4, li: e.li, ti: e.ti});
+		bodies.push({x0: x, x1: x + bw, y0: stack ? by - 1 : by - 4, y1: stack ? by + bh + 1 : by + bh + 4, li: e.li, ti: e.ti, stack});
 		if (sg) {                                    // missing line end: suggested end, dashed, can be dragged
 			const isSelE = sel && sel.end && sel.li === e.li && sel.ti === e.ti;
 			ctx.strokeStyle = isSelE ? C.cursor : C.warn;
@@ -1832,11 +1848,16 @@ function tlCursor(x, y) {
 		const ex = t => (t - view.start) / view.span * tl.clientWidth;
 		if (Math.abs(ex(edit.zone.a) - x) < 7 || Math.abs(ex(edit.zone.b) - x) < 7) return 'ew-resize';
 	}
+	const sb = bodyAt(x, y);
+	if (sb && sb.stack) return open(sb.li) ? 'grab' : '';
 	const m = marks.find(o => Math.abs(o.x - x) < 7);
 	if (m) return open(m.li) ? 'ew-resize' : '';
-	const b = bodies.find(o => x > o.x0 + 4 && x < o.x1 - 4 && y >= o.y0 && y <= o.y1);
-	return b && open(b.li) ? 'grab' : '';
+	return sb && open(sb.li) ? 'grab' : '';
 }
+
+// word box under the mouse: a stacked one (same time as the next word) anywhere on it, a normal one off its edges
+const bodyAt = (x, y) => bodies.find(o => o.stack && x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1) ||
+	bodies.find(o => !o.stack && x > o.x0 + 4 && x < o.x1 - 4 && y >= o.y0 && y <= o.y1);
 
 // while a box (word, word edge, line) is dragged, its start plays briefly like a right click once the mouse
 // rests, then again and again from where the box is now until the button is let go, and once more after that
@@ -1848,27 +1869,28 @@ function dragSnip(t, now = false) {
 	if (now) audition(t); else dragSnipTimer = setTimeout(() => { if (drag) audition(t); }, 140);
 }
 
-// a word box dragged: the word keeps its length and cannot pass the word before it. Moved right it pushes the
-// start of the next word ahead of it; moved left it leaves a pause after it. Always computed from the line as it
-// was at the press, so going back and forth leaves nothing behind.
+// a word box dragged: it cannot pass the words before and after it. Moved right it gets shorter and the next word
+// stays where it is; moved left it leaves a pause after it. The last word (nothing placed after it) keeps its length.
+// Always computed from the line as it was at the press, so going back and forth leaves nothing behind.
 function moveWord(h, dt) {
 	const ln = doc.lines[h.li], o = drag.w, ok = o[h.ti], prev = o[h.ti - 1], next = o[h.ti + 1];
 	ln.tokens.forEach((x, i) => { x.t = o[i].t; x.end = o[i].end; });
+	const nt = next && next.t != null ? next.t : null;
 	let lo = -ok.t, hi = Infinity;
-	if (prev && prev.t != null) lo = Math.max(lo, prev.t + 0.05 - ok.t);
-	if (next && next.t != null && drag.nb0 != null && drag.b0 != null) hi = Math.max(lo, drag.nb0 - 0.05 - drag.b0);
+	if (prev && prev.t != null) lo = Math.min(0, Math.max(lo, prev.t + 0.05 - ok.t));    // already too close: it never jumps
+	if (nt != null) hi = Math.max(0, nt - 0.05 - ok.t);
 	dt = LRC.q(Math.max(lo, Math.min(hi, dt)));
 	const k = ln.tokens[h.ti];
 	k.t = LRC.q(ok.t + dt);
 	if (prev && prev.end != null && prev.end > k.t) ln.tokens[h.ti - 1].end = k.t;
 	if (drag.b0 == null) return;
 	const e = LRC.q(drag.b0 + dt);
-	if (ok.end != null || !next || next.t == null) {        // own end (or the suggested one): it moves along
+	if (nt == null) {                                       // own end (or the suggested one): it moves along
 		if (drag.e0 != null) k.end = e;
 		return;
 	}
-	if (e >= next.t) ln.tokens[h.ti + 1].t = e;
-	else k.end = e;
+	// reaches the next word (or had no length, stacked): no end mark, the box ends where the next word starts
+	k.end = e < nt && e > k.t + 0.02 ? e : null;
 }
 
 // a line box dragged sideways: all its times move together, it stops at the lines before and after it, and it
@@ -1944,12 +1966,14 @@ tl.addEventListener('mousedown', e => {
 		return;
 	}
 	let hit = null, bd = 7;
-	for (const m of marks) {
+	const sb = bodyAt(x, y);
+	if (sb && sb.stack) hit = {li: sb.li, ti: sb.ti, end: false, body: true};
+	else for (const m of marks) {
 		const d = Math.abs(m.x - x) - (sel && m.li === sel.li && m.ti === sel.ti && m.end === !!sel.end ? 2 : 0);
 		if (d < bd) { bd = d; hit = m; }
 	}
 	if (!hit) {                                  // inside a word box: move the whole word
-		const b = bodies.find(o => x > o.x0 + 4 && x < o.x1 - 4 && y >= o.y0 && y <= o.y1);
+		const b = bodyAt(x, y);
 		if (b) hit = {li: b.li, ti: b.ti, end: false, body: true};
 	}
 	if (hit && !edit) {                          // a word of a closed line: marked, and it moves at once (no OK needed)
@@ -1977,7 +2001,6 @@ tl.addEventListener('mousedown', e => {
 	if (hit && hit.body) {
 		drag.w = JSON.parse(JSON.stringify(doc.lines[hit.li].tokens));
 		drag.b0 = boxEnd(hit.li, hit.ti);
-		drag.nb0 = last0 ? null : boxEnd(hit.li, hit.ti + 1);
 		tl.style.cursor = 'grabbing';
 	}
 	const W = tl.clientWidth;
