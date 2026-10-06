@@ -487,6 +487,27 @@ aside {
 .side-top button:hover { color: var(--text-hi); }
 #sideMini { display: none; }
 
+/* help open (?): the side panel folds up to full height on the right, the stage and word list make room */
+@media (min-width: 681px) {
+	body.help-open aside {
+		position: fixed;
+		top: var(--help-top, 120px);
+		right: 16px;
+		bottom: 16px;
+		width: 400px !important;
+		z-index: 6;
+		background: var(--panel-solid);
+		animation: help-up 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+	}
+	body.help-open #stage, body.help-open main { margin-right: 416px; }
+	body.help-open main { padding-right: 0; }
+	body.help-open .side-top, body.help-open #splitSide { display: none; }
+}
+@keyframes help-up {
+	from { transform: translateY(35%); opacity: 0.3; }
+	to { transform: none; opacity: 1; }
+}
+
 /* folded side panel: a narrow strip with error counts and a map of where in the song they are */
 @media (min-width: 681px) {
 	body.side-mini aside { width: 46px !important; padding: 6px 5px; display: flex; flex-direction: column; overflow: hidden; }

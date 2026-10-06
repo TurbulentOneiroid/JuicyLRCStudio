@@ -2102,10 +2102,22 @@ $('maxGap').onchange = () => {
 	changed(false);
 };
 try { const g = localStorage.getItem('lrcEditorMaxGap'); if (g) $('maxGap').value = g; } catch (e) { /* ignore */ }
+// ? opens the help: the side panel folds up to full height on the right, so the tour can point at everything;
+// closing it puts the panel back where it was (left / right, folded or not)
+let helpSide = null;
 $('btnHelp').onclick = () => {
-	$('help').hidden = !$('help').hidden;
-	$('btnHelp').classList.toggle('on', !$('help').hidden);
-	if (!$('help').hidden) $('help').scrollIntoView({block: 'start', behavior: 'smooth'});
+	const open = $('help').hidden;
+	const b = document.body.classList;
+	if (open) {
+		helpSide = [b.contains('side-left'), b.contains('side-mini')];
+		sideLayout(false, false, false);
+		document.documentElement.style.setProperty('--help-top', Math.max(12, Math.round(document.querySelector('header').getBoundingClientRect().bottom + 12)) + 'px');
+	} else if (helpSide) sideLayout(helpSide[0], helpSide[1], false);
+	$('help').hidden = !open;
+	b.toggle('help-open', open);
+	$('btnHelp').classList.toggle('on', open);
+	if (open) setTimeout(() => $('help').scrollIntoView({block: 'start', behavior: 'smooth'}), 50);
+	fitPreview();
 };
 // tour in the help: pointing at an entry outlines its area on the page
 document.querySelectorAll('#tour [data-area]').forEach(li => {

@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Juicy LRC Studio – kostenloser LRC-Editor online (free LRC editor)</title>
-<meta name="description" content="Kostenloser LRC-Editor im Browser: Songtexte Wort für Wort und Silbe für Silbe aufs Audio legen (Enhanced LRC). Free to use, ohne Anmeldung, ohne Upload – alles bleibt auf deinem Rechner.">
-<meta name="keywords" content="LRC Editor, LRC Maker, LRC Generator, free LRC editor, free LRC tool, free to use, kostenlos, LRC Datei erstellen, Songtext synchronisieren, Lyrics synchronisieren, synced lyrics, enhanced LRC, word timing, lyrics editor, online, browser, open source">
+<meta name="description" content="Kostenloser LRC-Editor im Browser: Songtexte Wort für Wort und Silbe für Silbe aufs Audio legen (Enhanced LRC) und die LRC mit den Original-Lyrics vergleichen, um Fehler im Text zu finden und mit einem Klick zu beheben. Free to use, ohne Anmeldung, ohne Upload – alles bleibt auf deinem Rechner.">
+<meta name="keywords" content="LRC Editor, LRC Maker, LRC Generator, free LRC editor, free LRC tool, free to use, kostenlos, LRC Datei erstellen, Songtext synchronisieren, Lyrics synchronisieren, synced lyrics, enhanced LRC, word timing, lyrics editor, LRC mit Original vergleichen, Lyrics vergleichen, compare lyrics, lyrics checker, Fehler im Songtext beheben, fix lyrics errors, online, browser, open source">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="https://turbulentoneiroid.github.io/JuicyLRCStudio/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Juicy LRC Studio – free LRC editor">
-<meta property="og:description" content="Free online LRC editor and LRC maker: sync lyrics word by word to your audio (enhanced LRC / A2). Free to use, no sign-up, no upload, runs in your browser.">
+<meta property="og:description" content="Free online LRC editor and LRC maker: sync lyrics word by word to your audio (enhanced LRC / A2) and compare your LRC with the original lyrics to find wrong, missing or extra words and fix them with one click. Free to use, no sign-up, no upload, runs in your browser.">
 <meta property="og:url" content="https://turbulentoneiroid.github.io/JuicyLRCStudio/">
 <meta property="og:image" content="https://turbulentoneiroid.github.io/JuicyLRCStudio/assets/juicy.png">
 <meta name="twitter:card" content="summary">
@@ -20,7 +20,7 @@
 	"@type": "WebApplication",
 	"name": "Juicy LRC Studio",
 	"url": "https://turbulentoneiroid.github.io/JuicyLRCStudio/",
-	"description": "Free online LRC editor and LRC maker: sync lyrics word by word to your audio (enhanced LRC / A2). Free to use, no sign-up, no upload, runs in your browser.",
+	"description": "Free online LRC editor and LRC maker: sync lyrics word by word to your audio (enhanced LRC / A2) and compare your LRC with the original lyrics to find wrong, missing or extra words and fix them with one click. Free to use, no sign-up, no upload, runs in your browser.",
 	"applicationCategory": "MultimediaApplication",
 	"operatingSystem": "Any (web browser)",
 	"browserRequirements": "Chrome or Edge recommended",
@@ -28,7 +28,7 @@
 	"isAccessibleForFree": true,
 	"license": "https://opensource.org/licenses/MIT",
 	"offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR"},
-	"keywords": "LRC editor, LRC maker, LRC generator, free LRC tool, synced lyrics, enhanced LRC, lyrics editor, free to use"
+	"keywords": "LRC editor, LRC maker, LRC generator, free LRC tool, synced lyrics, enhanced LRC, lyrics editor, compare lyrics, lyrics checker, free to use"
 }
 </script>
 <meta name="theme-color" content="#0b0b10">
@@ -41,7 +41,7 @@
 		<div class="bubbles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
 		<img class="mascot" src="assets/juicy.png" alt="Juicy, das Maskottchen">
 		<h1><span class="grad">Juicy</span> LRC Studio</h1>
-		<p>Songtexte Wort für Wort aufs Audio legen.<br><small>Kostenlos · ohne Anmeldung · alles bleibt auf deinem Rechner</small></p>
+		<p>Songtexte Wort für Wort aufs Audio legen<br>und mit den Original-Lyrics vergleichen, um Fehler zu beheben.<br><small>Kostenlos · ohne Anmeldung · alles bleibt auf deinem Rechner</small></p>
 		<button id="splashGo" type="button">Studio öffnen</button>
 		<div class="splash-bar"><i></i></div>
 	</div>
@@ -76,7 +76,7 @@
 		<div id="checks" class="group checks">
 			<button id="fixSame" title="Wörter mit gleicher Zeit gleichmäßig bis zum nächsten Wort verteilen">Zeiten verteilen</button>
 			<button id="fixEnds" title="Fehlende Zeilenenden ungefähr setzen (danach nachhören!)">Enden schätzen</button>
-			<button id="btnRef" title="Original-Songtext einfügen: falsche, fehlende und überzählige Wörter werden markiert, mit Vorschlag">Original vergleichen</button>
+			<button id="btnRef" title="Original-Lyrics einfügen (z. B. von einer Lyrics-Seite): falsche, fehlende und überzählige Wörter werden markiert und lassen sich mit einem Klick beheben">Mit Original-Lyrics vergleichen</button>
 		</div>
 		<div class="group transport">
 			<button id="btnPlay" class="wide" title="Abspielen / Pause (Leertaste, P)">▶</button>
@@ -94,7 +94,7 @@
 			<button id="btnUndo" class="icon" title="Rückgängig (Strg+Z)">↶</button>
 			<button id="btnRedo" class="icon" title="Wiederholen (Strg+Y)">↷</button>
 			<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
-			<button id="btnHelp" class="icon" title="Rundgang durch die Bereiche, Tasten und Hilfe">?</button>
+			<button id="btnHelp" class="icon" title="Rundgang durch die Bereiche, Tasten und Hilfe – die Seitenleiste klappt dafür rechts nach oben, nochmal ? = zurück">?</button>
 		</div>
 	</div>
 	<div id="fileInfo"></div>
@@ -215,7 +215,7 @@
 				<li data-area="header .files"><b>Dateien</b> (ganz oben): 📁 Ordner, ♪ Audio und LRC laden oder <i>Neu aus Text</i>,
 					dann Speichern und am Schluss 🎉 Fertig. Mit einem Ordner kommen ◀ ▶ dazu, um durch die Songs zu blättern.</li>
 				<li data-area="#checks"><b>Prüf-Werkzeuge</b> (links neben ▶): gleiche Zeiten verteilen, fehlende Zeilenenden schätzen und
-					den Text mit dem Original vergleichen.</li>
+					den Text mit den Original-Lyrics vergleichen und Fehler mit einem Klick beheben.</li>
 				<li data-area="header .transport"><b>Wiedergabe</b>: ▶ Play, ↻ Loop-Modus, Zeit, Tempo 100 – 25 % und <i>Folgen</i>.
 					Rechts daneben ↶ ↷, ⚙ Einstellungen und diese Hilfe.</li>
 				<li data-area="#preview"><b>Vorschau</b>: die aktuelle und die nächste Zeile wie später im Player, gesungene Wörter färben sich.
@@ -240,7 +240,7 @@
 			<ol class="steps-help">
 				<li>Audio und Text laden (oder einen Ordner).</li>
 				<li>Zeile markieren, <b>B</b> = bearbeiten, mit rechts anhören und links die Wörter setzen – oder mit der Leertaste mittippen.</li>
-				<li>Rechts die Prüfung und <i>Original vergleichen</i> abarbeiten (<b>N</b> = nächster Fehler).</li>
+				<li>Rechts die Prüfung und <i>Mit Original-Lyrics vergleichen</i> abarbeiten (<b>N</b> = nächster Fehler).</li>
 				<li>Speichern, und wenn alles sitzt: 🎉 Fertig.</li>
 			</ol>
 			<h3>Tasten</h3>
@@ -255,7 +255,7 @@
 				<tr><td>↻ (neben ▶)</td><td>Loop-Modus, an = die markierte Zeile läuft immer im Loop; wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Track läuft durch</td></tr>
 				<tr><td>L</td><td>markierte Zeile im Loop abspielen, mit Vor- und Nachlauf (oben <i>Loop ±</i>). Läuft auch von selbst, sobald du das Zeilenende gesetzt hast</td></tr>
 				<tr><td>X / ✂</td><td>Klinge an / aus (wie im Schnittprogramm): Klick in die Zeitleiste teilt die Zeile dort in zwei Boxen. Liegt der Schnitt in einem Wort, endet die linke Zeile am Schnitt und die rechte beginnt mit dem nächsten Wort. Esc = Klinge aus, Strg+Z = zurück</td></tr>
-				<tr><td>Original</td><td><i>Original vergleichen</i> (oben links neben ▶): Original-Songtext einfügen. Falsche, fehlende und überzählige Wörter werden unterstrichen und rechts mit Vorschlag gelistet (Tauschen / Einfügen / Löschen). <code>[Chorus]</code> usw. zählen nicht, Wörter in <code>( )</code> sind optional, Wiederholungen und Remix-Schnitte sind kein Fehler</td></tr>
+				<tr><td>Original</td><td><i>Mit Original-Lyrics vergleichen</i> (oben links neben ▶): Original-Lyrics einfügen. Falsche, fehlende und überzählige Wörter werden unterstrichen und rechts mit Vorschlag gelistet (Tauschen / Einfügen / Löschen). <code>[Chorus]</code> usw. zählen nicht, Wörter in <code>( )</code> sind optional, Wiederholungen und Remix-Schnitte sind kein Fehler</td></tr>
 				<tr><td>N / Shift+N</td><td>nächste / vorige Zeile mit Fehlern oder ungesetzten Wörtern: ihr erstes Problem wird markiert</td></tr>
 				<tr><td>T</td><td><i>Leertaste tippt</i> an / aus. An: läuft das Lied, setzt die Leertaste das markierte Wort. Beim letzten Wort einer Zeile <b>gedrückt halten</b>, bis es zu Ende gesungen ist: Loslassen setzt das Zeilenende. Nicht bei offener Zeile</td></tr>
 				<tr><td>E</td><td>Ende des zuletzt gesetzten Worts jetzt setzen (Zeilenende oder Pause)</td></tr>
@@ -304,10 +304,12 @@
 
 <dialog id="dlgRef">
 	<form method="dialog">
-		<h3>Mit dem Original-Songtext vergleichen</h3>
+		<h3>Mit den Original-Lyrics vergleichen</h3>
 		<p>Original-Text einfügen, z. B. von einer Lyrics-Seite. <code>[Verse 1]</code>, <code>[Chorus]</code> usw. und
 			eingestreute Werbung („You might also like …“) werden ignoriert, Wörter in <code>( )</code> gelten als optional.
-			Wiederholungen und Schnitte im Remix sind kein Fehler.</p>
+			Wiederholungen und Schnitte im Remix sind kein Fehler.<br>
+			Danach stehen die Abweichungen rechts im <i>Original-Abgleich</i>: ein Klick auf Tauschen, Einfügen oder Löschen
+				(oder <i>Alle tauschen</i>) behebt den Fehler in der LRC.</p>
 		<textarea id="refText" rows="16" spellcheck="false"></textarea>
 		<input type="file" id="refFileIn" accept=".txt,.lrc,text/plain" hidden>
 		<div class="row end">
