@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Juicy LRC Studio</title>
+<meta name="description" content="LRC-Editor im Browser: Songtexte Wort für Wort aufs Audio legen. Alles bleibt lokal.">
+<meta name="theme-color" content="#0b0b10">
+<link rel="icon" type="image/png" href="assets/juicy.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="splash">
+	<div class="splash-card">
+		<div class="bubbles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+		<img class="mascot" src="assets/juicy.png" alt="Juicy, das Maskottchen">
+		<h1><span class="grad">Juicy</span> LRC Studio</h1>
+		<p>Songtexte Wort für Wort aufs Audio legen.</p>
+		<button id="splashGo" type="button">Studio öffnen</button>
+		<div class="splash-bar"><i></i></div>
+	</div>
+</div>
+
+<header>
+	<div class="brand" title="Juicy LRC Studio">
+		<img src="assets/juicy.png" alt="">
+		<span><b class="grad">Juicy</b> LRC Studio</span>
+	</div>
+	<div class="group files">
+		<button id="btnFolder" title="Ordner mit Audio und LRC öffnen: zeigt, welches Audio zu welcher LRC gehört und wo noch eine fehlt">📁 Ordner</button>
+		<button id="btnAudio" title="Audio laden (mp3, wav, flac, m4a …) – bleibt lokal">♪ Audio</button>
+		<button id="btnOpen" title="LRC-Datei öffnen">LRC öffnen</button>
+		<button id="btnNew" title="Neue LRC aus eingefügtem Songtext">Neu aus Text</button>
+		<span class="sep"></span>
+		<button id="btnSave" class="primary" title="Speichern (Strg+S)">Speichern</button>
+		<button id="btnSaveAs">Speichern unter</button>
+		<button id="btnReset" title="Auf den geladenen Stand zurück oder alle Wortzeiten löschen">Zurücksetzen</button>
+		<input type="file" id="fileAudio" accept="audio/*,.mp3,.wav,.flac,.m4a,.aif,.aiff,.ogg" hidden>
+		<input type="file" id="fileLrc" accept=".lrc,.txt,text/plain" hidden>
+		<input type="file" id="fileFolder" webkitdirectory multiple hidden>
+	</div>
+	<div class="group tools">
+		<button id="btnUndo" class="icon" title="Rückgängig (Strg+Z)">↶</button>
+		<button id="btnRedo" class="icon" title="Wiederholen (Strg+Y)">↷</button>
+		<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
+		<button id="btnHelp" class="icon" title="Tasten und Hilfe">?</button>
+	</div>
+	<div class="group transport">
+		<button id="btnPlay" class="wide" title="Abspielen / Pause (Leertaste, P)">▶</button>
+		<button id="btnLoopMode" class="icon on" title="Loop-Modus: die markierte Zeile läuft immer im Loop, eine andere Zeile wählen = dort weiterloopen. Aus = ganzen Track hören">↻</button>
+		<span id="clock">00:00.00 / 00:00.00</span>
+		<div class="seg" title="Tempo (1 / 2 / 3 / 4)">
+			<button class="speed" data-rate="1">100 %</button>
+			<button class="speed" data-rate="0.75">75 %</button>
+			<button class="speed" data-rate="0.5">50 %</button>
+			<button class="speed" data-rate="0.25">25 %</button>
+		</div>
+		<label title="Zeitleiste folgt der Wiedergabe"><input id="follow" type="checkbox" checked> Folgen</label>
+	</div>
+	<div id="fileInfo"></div>
+</header>
+
+<div id="settings" popover>
+	<h3>Einstellungen</h3>
+	<div class="set-grid">
+		<h4>Abspielen</h4>
+		<label title="Bei 50 % und langsamer: Bass und Höhen leiser und sanft komprimiert, damit das gedehnte Audio weniger knackt">
+			<input id="voiceFilter" type="checkbox" checked> Sprachfilter</label>
+		<label title="So lange spielt ein Rechtsklick in die Zeitleiste an (Liedzeit, bei 25 % also 4× so lang zu hören)">Anspielen
+			<span><input id="snipLen" type="number" value="0.5" step="0.1" min="0.1"> s</span></label>
+		<label title="Beim Bearbeiten und Reparieren beginnt die Loop-Box so viel vor der Zeile. Auch mit der linken Kante der Box ziehbar">Vorlauf
+			<span><input id="preRoll" type="number" value="0" step="0.1" min="0"> s</span></label>
+		<label title="So viel Vor- und Nachlauf hat der Loop einer Zeile (L)">Loop ±
+			<span><input id="loopPad" type="number" value="0.3" step="0.1" min="0"> s</span></label>
+		<label title="Ist das Zeilenende mit der Maus gesetzt, läuft die Zeile im Loop zum Nachhören">
+			<input id="autoLoop" type="checkbox" checked> Fertige Zeile loopen</label>
+		<h4>Tippen</h4>
+		<label title="Aus: Leertaste = Abspielen / Pause. An: läuft das Lied, setzt die Leertaste das markierte Wort (T)">
+			<input id="tapMode" type="checkbox"> Leertaste tippt</label>
+		<label title="Nach dem letzten Wort einer Zeile ist zuerst ihr Ende dran, dann die nächste Zeile">
+			<input id="tapEnds" type="checkbox"> Zeilenende mittippen</label>
+		<label title="Wird von jedem Tipp abgezogen, falls du immer etwas zu spät drückst">Tipp-Ausgleich
+			<span><input id="tapComp" type="number" value="0" step="10" min="-300" max="300"> ms</span></label>
+		<h4>Prüfung</h4>
+		<label title="Ein Wort, das länger dauert (bis zu seiner Endmarke oder sonst bis zum nächsten Wort), wird rot markiert">Max. Wortlänge
+			<span><input id="maxGap" type="number" value="5" step="0.5" min="0"> s</span></label>
+		<label title="Ein fehlendes Zeilenende wird erst gemeldet, wenn die nächste Zeile später als das nach dem letzten Wort beginnt. Sonst endet das Wort einfach mit der nächsten Zeile">Ende fehlt ab
+			<span><input id="endGap" type="number" value="0.5" step="0.1" min="0"> s</span></label>
+		<h4>Studio</h4>
+		<label title="Beim Öffnen den Juicy-Jingle spielen"><input id="jingleOn" type="checkbox" checked> Start-Sound</label>
+		<label title="Gelöschte Wörter, Zeilen und Zeiten zerplatzen in aufsteigende Seifenblasen"><input id="bubblesOn" type="checkbox" checked> Blasen beim Löschen</label>
+	</div>
+</div>
+
+<div id="draft" hidden>
+	Ungespeicherter Entwurf vom <b id="draftTime"></b> gefunden.
+	<button id="draftLoad">Wiederherstellen</button> <button id="draftDrop">Verwerfen</button>
+</div>
+
+<section id="stage">
+	<div id="preview"><div id="pvCur"></div><div id="pvNext"></div></div>
+	<canvas id="overview" height="34"></canvas>
+	<canvas id="timeline" height="179"></canvas>
+	<div id="modeBar"><span id="modeText"></span>
+		<button id="btnEdit" title="Markierte Zeile öffnen, um ihre Zeiten zu ändern (B oder Doppelklick auf ihre Box)">✎ Zeile bearbeiten</button>
+		<button id="btnOk" title="Zeile übernehmen und zur nächsten Zeile mit Fehlern (Enter)" hidden>✓ OK</button>
+		<button id="btnCancel" title="Zeile so zurücksetzen, wie sie vor dem Bearbeiten war (Esc)" hidden>✕ Abbrechen</button>
+	</div>
+</section>
+
+<main>
+	<section id="editor">
+		<div class="tabs">
+			<button class="tab active" data-tab="words">Wörter</button>
+			<button class="tab" data-tab="raw">Text (LRC)</button>
+			<button id="btnLoop" title="Markierte Zeile im Loop abspielen, mit kurzem Vor- und Nachlauf (L)">↻ Zeile loopen</button>
+			<button id="btnNext" title="Zur nächsten Zeile mit Fehlern oder ungesetzten Wörtern (N, Shift+N zurück)">Nächster Fehler ⏭</button>
+			<button id="btnVoice" title="Stimme der ausgewählten Zeilen setzen (V): v1, v2 … / M, F, D / bg = Hintergrund">Stimme</button>
+			<button id="btnRepair" title="Ausgewählte Zeilen neu tippen (R). Zeilen auswählen: Zeilennummer anklicken, Shift = Bereich, Strg = einzeln dazu">Reparieren</button>
+			<span id="hint"></span>
+		</div>
+		<div id="words"></div>
+		<div id="raw" hidden>
+			<textarea id="rawText" spellcheck="false"></textarea>
+			<button id="rawApply">Übernehmen</button>
+		</div>
+	</section>
+	<aside>
+		<h3>Song</h3>
+		<div id="meta">
+			<label>Titel <input data-key="ti"></label>
+			<label>Artist <input data-key="ar"></label>
+			<label>Album <input data-key="al"></label>
+			<label>Erstellt von <input data-key="by"></label>
+			<label>Offset (ms) <input data-key="offset"></label>
+		</div>
+		<h3>Prüfung <span id="sum"></span></h3>
+		<div class="fixes">
+			<button id="fixSame" title="Wörter mit gleicher Zeit gleichmäßig bis zum nächsten Wort verteilen">Gleiche Zeiten verteilen</button>
+			<button id="fixEnds" title="Fehlende Zeilenenden ungefähr setzen (danach nachhören!)">Fehlende Enden schätzen</button>
+		</div>
+		<div id="issues"></div>
+		<div id="help" hidden>
+			<h3>Tasten</h3>
+			<table>
+				<tr><td>B</td><td><b>Zeile bearbeiten</b>: öffnet die markierte Zeile (auch Doppelklick auf ihre Box). Nur dann ändern sich Zeiten, und nur in dieser Zeile. <b>Enter</b> = OK (übernehmen, weiter zur nächsten Zeile mit Fehlern), <b>Esc</b> = Abbrechen (Zeile wie vorher)</td></tr>
+				<tr><td>Leertaste</td><td>Abspielen / Pause. Ist eine Zeile offen (Bearbeiten oder Reparieren): Start / Stop der <b>Loop-Box</b>, die Wiedergabe bleibt in der Box</td></tr>
+				<tr><td>Loop-Box</td><td>beim Bearbeiten und Reparieren: von <i>Vorlauf</i> vor der Zeile bis zum Anfang der nächsten Zeile. Linke Kante ziehen = Vorlauf, rechte Kante = Ende</td></tr>
+				<tr><td>Wort ziehen</td><td>in der Zeitleiste die Wort-Box (Balken unter dem Wort) anfassen = ganzes Wort verschieben, es behält seine Länge und schiebt das nächste Wort vor sich her. Linke oder rechte Kante ziehen = Wort nach links / rechts länger oder kürzer. Dabei spielt der Anfang des Wortes kurz an (wie Rechtsklick), sobald die Maus kurz still steht und beim Loslassen. Gilt sofort, ohne OK</td></tr>
+				<tr><td>Zeile ziehen</td><td>die Zeilen-Box ganz unten anfassen und nach links / rechts ziehen = die ganze Zeile mit allen Wörtern verschieben (bis an die Zeile davor / danach). Dabei spielt ihr Anfang kurz an. Gilt sofort, ohne OK. Klick ohne Ziehen = Zeile markieren</td></tr>
+				<tr><td>Rechtsklick</td><td>in der Zeitleiste: ab dort kurz anspielen (Länge oben bei <i>Anspielen</i>). Beim Bearbeiten hängt das markierte Wort an der Maus, <b>Linksklick</b> setzt es und das nächste der Zeile hängt dran. Nach dem letzten Wort kommt das Zeilenende (⏹), dann läuft die Zeile im Loop</td></tr>
+				<tr><td>Strg+Klick</td><td>beim Bearbeiten: in der Zeitleiste nur dorthin springen, statt zu setzen</td></tr>
+				<tr><td>↻ (neben ▶)</td><td>Loop-Modus, an = die markierte Zeile läuft immer im Loop; wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Track läuft durch</td></tr>
+				<tr><td>L</td><td>markierte Zeile im Loop abspielen, mit Vor- und Nachlauf (oben <i>Loop ±</i>). Läuft auch von selbst, sobald du das Zeilenende gesetzt hast</td></tr>
+				<tr><td>N / Shift+N</td><td>nächste / vorige Zeile mit Fehlern oder ungesetzten Wörtern: ihr erstes Problem wird markiert</td></tr>
+				<tr><td>T</td><td><i>Leertaste tippt</i> an / aus. An: läuft das Lied, setzt die Leertaste das markierte Wort. Beim letzten Wort einer Zeile <b>gedrückt halten</b>, bis es zu Ende gesungen ist: Loslassen setzt das Zeilenende. Nicht bei offener Zeile</td></tr>
+				<tr><td>E</td><td>Ende des zuletzt gesetzten Worts jetzt setzen (Zeilenende oder Pause)</td></tr>
+				<tr><td>Rücktaste</td><td>letzten Tipp zurücknehmen und 2 s zurückspulen</td></tr>
+				<tr><td>P / Esc</td><td>Abspielen / Pause (Esc beendet auch den Loop, bricht das Bearbeiten bzw. eine Reparatur ab)</td></tr>
+				<tr><td>R</td><td>Reparieren: die ausgewählten Zeilen (Zeilennummer anklicken, Shift = Bereich, Strg = einzeln) werden eine nach der anderen neu gesetzt, mit Loop-Box und den alten Zeiten grau als Hilfe. OK = nächste Zeile, Esc = alte Zeiten zurück</td></tr>
+				<tr><td>Enter</td><td>ab kurz vor dem markierten Wort abspielen (beim Bearbeiten: OK)</td></tr>
+				<tr><td>← →</td><td>vorheriges / nächstes Wort markieren</td></tr>
+				<tr><td>Shift + ← →</td><td>markierte Zeit ±10 ms (mit Strg ±100 ms). Wie S und Entf nur beim Bearbeiten</td></tr>
+				<tr><td>S</td><td>markierte Zeit = Abspielposition</td></tr>
+				<tr><td>Entf</td><td>markierte Zeit löschen</td></tr>
+				<tr><td>F2 / Doppelklick</td><td>Wort bearbeiten. <code>|</code> trennt Silben (<code>Hel|lo</code>), Leerzeichen trennt Wörter, leer = löschen</td></tr>
+				<tr><td>V</td><td>Stimme der ausgewählten Zeilen: v1, v2 … (eLRC) oder M, F, D (Mann, Frau, Duett), bg = Hintergrund. Ohne Tag gilt die Stimme der Zeile darüber. Hintergrund-Zeilen werden beim normalen Tippen übersprungen, setze sie mit Reparieren</td></tr>
+				<tr><td>1 / 2 / 3 / 4</td><td>Tempo 100 / 75 / 50 / 25 %</td></tr>
+				<tr><td>Strg+Z / Strg+Y</td><td>Rückgängig / Wiederholen</td></tr>
+				<tr><td>Strg+S</td><td>Speichern</td></tr>
+			</table>
+			<p>Zurücksetzen: auf den Stand wie geladen bzw. angelegt, oder nur alle Wortzeiten löschen. Beides lässt sich mit Strg+Z zurücknehmen.</p>
+			<p>Zeitleiste: Unten steht jede Zeile als Box von Anfang bis Ende: hellblau die markierte, rot / orange mit Fehlern.
+				Klick auf eine Box markiert die Zeile, Doppelklick öffnet sie. Beim Bearbeiten ist der Arbeitsbereich hellblau unterlegt: vom Zeilenanfang bis zum Wort, das du gerade setzt.
+				Marken der geöffneten Zeile ziehen = verschieben, sonst Klick = dorthin springen, Mausrad = Zoom, Shift+Mausrad oder Ziehen im Leeren = blättern. Audio und LRC lassen sich auch ins Fenster ziehen.</p>
+			<p>Ende (⏹ Ende) = wo die letzte Silbe der Zeile aufhört. Fehlt es und die nächste Zeile ist weit weg, zeigt die Zeitleiste einen Vorschlag (gestrichelt, <i>Ende?</i>). OK beim Bearbeiten übernimmt ihn, ziehen verschiebt ihn.</p>
+			<p>📁 Ordner: zeigt alle Songs im Ordner (auch Unterordner), welches Audio zu welcher LRC gehört und wo eine fehlt. <i>LRC erstellen</i> legt sie beim Speichern direkt im Ordner an.</p>
+			<p>Speichern: Die LRC muss heißen wie das Audio (ohne Endung), sonst findet der Player sie nicht. Der Editor schlägt den Namen vor.</p>
+		</div>
+	</aside>
+</main>
+
+<dialog id="dlgNew">
+	<form method="dialog">
+		<h3>Neue LRC aus Songtext</h3>
+		<p>Songtext einfügen, eine Zeile pro Bildschirmzeile. Silben bei Bedarf mit <code>|</code> trennen
+			(<code>Lie|be</code>), dann tippst du sie einzeln.</p>
+		<div class="row">
+			<label>Titel <input id="newTi"></label>
+			<label>Artist <input id="newAr"></label>
+		</div>
+		<textarea id="newText" rows="16" spellcheck="false"></textarea>
+		<div class="row end">
+			<button value="cancel">Abbrechen</button>
+			<button id="newOk" value="ok">Anlegen</button>
+		</div>
+	</form>
+</dialog>
+
+<dialog id="dlgFolder">
+	<form method="dialog">
+		<h3>Ordner: <span id="folderName"></span></h3>
+		<p id="folderSum"></p>
+		<div id="folderList"></div>
+		<div class="row end">
+			<button type="button" id="folderOther">Anderer Ordner …</button>
+			<button value="close">Schließen</button>
+		</div>
+	</form>
+</dialog>
+
+<dialog id="dlgReset">
+	<form method="dialog">
+		<h3>Zurücksetzen</h3>
+		<p><b>Wie geladen:</b> alles auf den Stand beim Öffnen bzw. Anlegen der Datei.<br>
+			<b>Wortzeiten löschen:</b> Text und Zeilenzeiten bleiben, alle Wort- und Endmarken sind weg.<br>
+			Beides lässt sich mit Strg+Z zurücknehmen.</p>
+		<div class="row end">
+			<button value="cancel">Abbrechen</button>
+			<button value="times">Wortzeiten löschen</button>
+			<button value="origin">Wie geladen</button>
+		</div>
+	</form>
+</dialog>
+
+<canvas id="fx" aria-hidden="true"></canvas>
+<script src="lrc.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

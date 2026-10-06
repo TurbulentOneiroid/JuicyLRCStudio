@@ -1,0 +1,14 @@
+# Only the web app goes public: everything is ignored, the app files are let back in
+/*
+!/.gitignore
+!/.nojekyll
+!/LICENSE
+!/README.md
+!/index.html
+!/app.js
+!/lrc.js
+!/style.css
+!/assets/
+/assets/*
+!/assets/juicy.png
+!/assets/jingle.wav
