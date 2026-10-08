@@ -41,6 +41,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - **✂ Klinge (X):** wie im Schnittprogramm in die Zeitleiste klicken, die Zeile wird dort in zwei geteilt (links endet sie
   am Schnitt, rechts beginnt sie mit dem nächsten Wort)
 - **Wortliste:** × am Wort löscht es, + daneben fügt ein Wort danach ein, ✓ an einem fehlenden Zeilenende setzt es fest, ↔ über einem Wort tauscht es gegen das Original (und ↶ wieder zurück)
+- **Silben vorschlagen** (optional, Deutsch / Englisch / automatisch): lang gesungene Wörter ohne Silben werden markiert, ✂ über dem Wort trennt sie (Lie|be) und teilt die Zeit auf
 - **⏸ Pause (P):** genauso in ein Wort klicken, es endet dort, bis zum nächsten Wort ist Pause (grüne Pause-Marke)
 - **Mit Original-Lyrics vergleichen:** Original-Songtext einfügen, falsche, fehlende und überzählige Wörter werden markiert, mit
   Vorschlag pro Wort (Tauschen / Einfügen / Löschen). `[Chorus]` usw. und Werbung von Lyrics-Seiten zählen nicht,

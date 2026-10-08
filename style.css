@@ -480,6 +480,8 @@ body.editing .line:not(.editing) { opacity: 0.32; }
 	visibility: hidden;
 	box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.7);
 }
+.tsug.syl { background: var(--accent); }
+.tok.sylw .w { text-decoration: underline dotted var(--accent); text-underline-offset: 4px; }
 .tsug.back { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-hi); font-weight: 600; }
 .tok:hover .tsug { visibility: visible; }
 .tsug:hover { filter: brightness(1.15); }

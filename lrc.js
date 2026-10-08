@@ -476,6 +476,90 @@ const LRC = (() => {
 		return {F: 2, D: 9}[v] || 0;
 	}
 
+	// ------------------------------------------------------------ syllables (German / English, rules, no dictionary)
+	//
+	// A guess where a sung word could be split: one vowel group per syllable, a single consonant between two of them
+	// starts the next syllable (Lie|be, ba|by), of several the last one does (sin|gen, Zu|cker with ck as one sound).
+	// English: a silent e at the end is no syllable (love, loved), -le is (lit|tle); bl / br / tr ... stay together.
+	// It may miss a split, it should rarely make a wrong one.
+
+	const DIPH = {
+		de: ['ie', 'ei', 'ey', 'ai', 'ay', 'au', 'eu', 'äu', 'aa', 'ee', 'oo'],
+		en: ['ea', 'ee', 'oo', 'ou', 'ai', 'ay', 'oy', 'oi', 'ey', 'ow', 'aw', 'ew', 'ie', 'ue', 'ui', 'au', 'oa', 'ei', 'io', 'eo']};
+	const UNITS = ['sch', 'ch', 'ck', 'ph', 'th', 'sh', 'qu', 'gh', 'wh'];
+	const ONSET = ['bl', 'br', 'cl', 'cr', 'dr', 'fl', 'fr', 'gl', 'gr', 'pl', 'pr', 'tr', 'sc', 'sk', 'sp', 'st', 'sw'];
+	const STOP = {
+		de: ['ich', 'du', 'und', 'die', 'der', 'das', 'nicht', 'ist', 'mich', 'dich', 'mir', 'dir', 'ein', 'eine', 'wir', 'sie', 'es',
+			'mit', 'auf', 'für', 'wie', 'so', 'noch', 'nur', 'auch', 'kein', 'mein', 'dein', 'zu', 'den', 'im', 'ja', 'nein'],
+		en: ['i', 'you', 'the', 'and', 'a', 'to', 'me', 'my', 'it', 'is', 'in', 'of', 'that', 'on', 'your', 'we', 'be', 'all', 'love',
+			'so', 'do', "don't", 'can', 'what', 'just', 'like', 'no', 'oh', 'baby', 'now', 'with', 'for', 'this', 'got', 'know']};
+
+	// which language a song is in: the more common little words win
+	function guessLang(doc) {
+		let de = 0, en = 0;
+		for (const ln of doc.lines) for (const k of ln.tokens) {
+			const w = k.text.toLowerCase().replace(/[^\p{L}']/gu, '');
+			if (STOP.de.includes(w)) de++;
+			if (STOP.en.includes(w)) en++;
+		}
+		return en > de ? 'en' : 'de';
+	}
+
+	// a word split into its syllables (as strings, punctuation stays at the ends); one piece when there is nothing to split
+	function sylGuess(word, lang = 'de') {
+		const m = word.match(/^([^\p{L}]*)([\p{L}'’]+)([^\p{L}]*)$/u);
+		if (!m || m[2].length < 4) return [word];
+		const w = m[2], s = w.toLowerCase(), n = s.length;
+		// compounds whose first part ends in a silent e (some|thing, some|one, love|ly): that e is no vowel
+		const pre = lang === 'en' && ['some', 'one', 'home', 'love', 'life', 'time', 'where', 'there', 'here', 'fire']
+			.find(p => s.startsWith(p) && n > p.length + 1);
+		const mute = pre ? pre.length - 1 : -1;
+		const isV = i => i !== mute && /[aeiouäöü]/.test(s[i]) || (s[i] === 'y' && i > 0 && !/[aeiouäöü]/.test(s[i + 1] || ''));
+		const nuc = [];                                  // vowel groups [start, end)
+		for (let i = 0; i < n;) {
+			if (!isV(i)) { i++; continue; }
+			const two = s.slice(i, i + 2);
+			const len = (DIPH[lang] || DIPH.de).includes(two) && isV(i + 1) ? (s[i + 2] === 'u' && two === 'ea' ? 3 : 2) : 1;
+			nuc.push([i, i + len]);
+			i += len;
+		}
+		if (lang === 'en' && nuc.length > 1) {          // silent e: love, loved, loves (but lit|tle, want|ed, kiss|es)
+			const [a] = nuc[nuc.length - 1], pre = s.slice(0, a);
+			const tail = s.slice(a);
+			const silent = (tail === 'e' && !/[^aeiou]le$/.test(s)) || (tail === 'ed' && !/[td]$/.test(pre)) ||
+				(tail === 'es' && !/(s|x|z|ch|sh|g|c)$/.test(pre));
+			if (silent && a > 0 && !isV(a - 1)) nuc.pop();
+		}
+		if (nuc.length < 2) return [word];
+		const cut = [];
+		for (let j = 0; j + 1 < nuc.length; j++) {
+			const a = nuc[j][1], b = nuc[j + 1][0], seg = s.slice(a, b), units = [];
+			for (let i = 0; i < seg.length;) {
+				const u = UNITS.find(x => seg.startsWith(x, i)) || seg[i];
+				units.push(u);
+				i += u.length;
+			}
+			let at = b;
+			if (units.length === 1) at = a;
+			else if (units.length > 1) {
+				const lastTwo = units.slice(-2).join('');
+				at = b - units[units.length - 1].length;
+				if (lang === 'en' && units.length >= 2 && ONSET.includes(lastTwo)) at = b - lastTwo.length;
+			}
+			if (lang === 'en' && j === nuc.length - 2 && /[^aeiouy]le$/.test(s)) at = n - 3;    // lit|tle, ap|ple
+			if (pre && j === 0) at = pre.length;           // the compound splits where its parts meet
+			cut.push(at);
+		}
+		const out = [];
+		let from = 0;
+		for (const c of cut) { if (c > from && c < n) { out.push(w.slice(from, c)); from = c; } }
+		out.push(w.slice(from));
+		if (out.length < 2 || out.some(p => !/[aeiouäöüy]/i.test(p))) return [word];
+		out[0] = m[1] + out[0];
+		out[out.length - 1] += m[3];
+		return out;
+	}
+
 	return {SAME, q, fmt, decode, parse, write, check, flat, tokEnd, lineTime, spreadSame, guessEnds, suggestEnd, fromText,
-		tokensOf, lineText, stripVoice, voices, voiceGroup, isBg, cleanLyrics, compareRef};
+		tokensOf, lineText, stripVoice, voices, voiceGroup, isBg, cleanLyrics, compareRef, syllables: sylGuess, guessLang};
 })();

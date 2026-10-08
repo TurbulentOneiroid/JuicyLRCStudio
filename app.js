@@ -48,6 +48,7 @@ let folder = null;              // opened folder: {name, songs: [{key, audio: [F
 let newTarget = null;           // {dir, name}: a new LRC made from the folder list is saved there
 let refRaw = '', refLines = null;  // original lyrics as pasted / cleaned lines (null = no comparison), see runRef
 let refDiffs = [], refAt = new Map(), refSkip = new Set();
+let sylAt = new Map();          // 'li:ti' -> syllables suggested for a word sung as one piece (option Silben vorschlagen)
 
 const tapComp = () => (+$('tapComp').value || 0) / 1000;
 const maxGap = () => Math.max(0, +$('maxGap').value || 0);
@@ -150,6 +151,7 @@ function changed(markDirty = true) {
 		if (i.level !== 'info' && lineBad.get(i.li) !== 'err') lineBad.set(i.li, i.level);
 	}
 	runRef();
+	runSyl();
 	renderWords();
 	renderIssues();
 	renderRef();
@@ -1230,7 +1232,8 @@ function renderWords() {
 			const lv = issueAt.get(li + ':' + ti);
 			const rd = refAt.get(li + ':' + ti), rm = refAt.get(li + ':' + ti + ':m');
 			const ra = ti === ln.tokens.length - 1 && refAt.get(li + ':' + (ti + 1) + ':m');
-			const cls = 'tok' + (k.glue ? ' glue' : '') + (k.t == null ? ' unset' : '') + (lv ? ' ' + lv : '') +
+			const sy = sylAt.get(li + ':' + ti);
+			const cls = 'tok' + (k.glue ? ' glue' : '') + (k.t == null ? ' unset' : '') + (lv ? ' ' + lv : '') + (sy ? ' sylw' : '') +
 				(rd ? ' rd-' + rd.kind : '') + (rm ? ' rd-miss' : '') + (ra ? ' rd-miss-after' : '');
 			const rt = [rd, rm, ra].filter(Boolean).map(refTitle).join(' · ');
 			html.push('<span class="' + cls + '" data-li="' + li + '" data-ti="' + ti + '"' + (rt ? ' title="' + esc(rt) + '"' : '') +
@@ -1238,7 +1241,8 @@ function renderWords() {
 				'</span><small>' + (k.t != null ? LRC.fmt(k.t) : ghostText(li, ti)) + '</small>' +
 				'<b class="tx" data-tact="del" title="Wort löschen">×</b><b class="tadd" data-tact="add" title="Wort danach einfügen">+</b>' +
 				(rd && rd.kind === 'sub' && rd.ti0 === ti ? '<b class="tsug" data-tact="swap" title="Gegen das Original tauschen">↔ ' + esc(rd.want) + '</b>'
-					: k.was != null ? '<b class="tsug back" data-tact="swap" title="Zurück zum Wort von vorher">↶ ' + esc(k.was.replace(/\|/g, '')) + '</b>' : '') +
+					: k.was != null ? '<b class="tsug back" data-tact="swap" title="Zurück zum Wort von vorher">↶ ' + esc(k.was.replace(/\|/g, '')) + '</b>'
+					: sy ? '<b class="tsug syl" data-tact="split" title="In Silben trennen, die Zeit des Wortes wird aufgeteilt">✂ ' + esc(sy.join('·')) + '</b>' : '') +
 				'</span>');
 			const last = ti === ln.tokens.length - 1;
 			if (last || k.end != null) {
@@ -2073,6 +2077,23 @@ function tokAction(act, li, ti) {
 			changed();
 			hint('„' + now + '“ → „' + k.was.replace(/\|/g, '') + '“ zurückgetauscht');
 		}
+	} else if (act === 'split') {                 // syllables: the word's time shared by the length of each piece
+		const ps = sylAt.get(li + ':' + ti);
+		if (!ps) return;
+		const e = k.t != null ? boxEnd(li, ti) : null;
+		pushUndo();
+		const nt = ps.map((text, i) => ({text, t: null, end: null, glue: i ? true : k.glue}));
+		nt[0].t = k.t;
+		nt[nt.length - 1].end = k.end;
+		if (e != null && e > k.t + 0.05 * ps.length) {
+			const wt = ps.map(p => Math.max(1, p.replace(/[^\p{L}]/gu, '').length)), sum = wt.reduce((x, w) => x + w, 0);
+			let acc = 0;
+			nt.forEach((x, i) => { x.t = LRC.q(k.t + (e - k.t) * acc / sum); acc += wt[i]; });
+		}
+		ln.tokens.splice(ti, 1, ...nt);
+		sel = {li, ti, end: false};
+		changed();
+		hint('„' + k.text + '“ getrennt: ' + ps.join('|') + ' – die Silben in der Zeitleiste fein ziehen  (Strg+Z = zurück)');
 	} else if (act === 'endok') {
 		const e = boxEnd(li, ti);
 		if (e == null) { hint('Hier gibt es noch keine Zeit fürs Ende – mit E oder in der Zeitleiste setzen.'); return; }
@@ -3149,6 +3170,31 @@ function runRef() {
 		else if (d.kind !== 'nomatch') for (let ti = d.ti0; ti <= d.ti1; ti++) refAt.set(d.li + ':' + ti, d);
 	}
 }
+
+// words that probably have syllables sung apart but are one piece in the LRC: only when the option is on, only words
+// that last long enough to be sung in pieces (or have no time yet)
+function runSyl() {
+	sylAt = new Map();
+	const m = $('sylMode').value;
+	if (m === 'off') return;
+	const lang = m === 'auto' ? LRC.guessLang(doc) : m;
+	doc.lines.forEach((ln, li) => ln.tokens.forEach((k, ti) => {
+		if (k.glue || (ln.tokens[ti + 1] && ln.tokens[ti + 1].glue)) return;     // already split
+		const ps = LRC.syllables(k.text, lang);
+		if (ps.length < 2) return;
+		const e = k.t != null ? boxEnd(li, ti) : null;
+		if (e != null && e - k.t < 0.2 * ps.length) return;                       // too short to sing in pieces
+		sylAt.set(li + ':' + ti, ps);
+	}));
+}
+$('sylMode').onchange = () => {
+	try { localStorage.setItem('lrcEditorSyl', $('sylMode').value); } catch (e) { /* ignore */ }
+	changed(false);
+	if ($('sylMode').value !== 'off') hint(sylAt.size ? sylAt.size + ' Wörter könnten Silben haben: gepunktet unterstrichen, über dem Wort ✂ = trennen.' :
+		'Keine Wörter gefunden, die noch Silben brauchen.');
+};
+try { const s = localStorage.getItem('lrcEditorSyl'); if (s) $('sylMode').value = s; } catch (e) { /* ignore */ }
+if ($('sylMode').value !== 'off') changed(false);
 
 function refTitle(d) {
 	return d.kind === 'sub' ? 'Original: „' + d.want + '“' : d.kind === 'extra' ? 'Steht nicht im Original' :
