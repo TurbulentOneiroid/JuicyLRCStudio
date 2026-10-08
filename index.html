@@ -43,6 +43,7 @@
 		<h1><span class="grad">Juicy</span> LRC Studio</h1>
 		<p>Songtexte Wort für Wort aufs Audio legen<br>und mit den Original-Lyrics vergleichen, um Fehler zu beheben.<br><small>Kostenlos · ohne Anmeldung · alles bleibt auf deinem Rechner</small></p>
 		<button id="splashGo" type="button">Studio öffnen</button>
+		<button id="splashTut" type="button" title="Führt mit einem Beispielsong Schritt für Schritt durch alle Funktionen">🎓 Tutorial starten</button>
 		<div class="splash-bar"><i></i></div>
 	</div>
 </div>
@@ -94,6 +95,7 @@
 			<button id="btnUndo" class="icon" title="Rückgängig (Strg+Z)">↶</button>
 			<button id="btnRedo" class="icon" title="Wiederholen (Strg+Y)">↷</button>
 			<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
+			<button id="btnTut" class="icon" title="Tutorial: führt mit einem Beispielsong Schritt für Schritt durch alle Funktionen">🎓</button>
 			<button id="btnHelp" class="icon" title="Rundgang durch die Bereiche, Tasten und Hilfe – die Seitenleiste klappt dafür rechts nach oben, nochmal ? = zurück">?</button>
 		</div>
 	</div>
@@ -214,6 +216,7 @@
 			<div id="refList"></div>
 		</div>
 		<div id="help" hidden>
+			<button id="helpTut" class="primary" type="button">🎓 Tutorial mit Beispielsong starten</button>
 			<h3>Rundgang: die Bereiche</h3>
 			<p class="tour-tip">Zeig mit der Maus auf einen Eintrag, dann leuchtet der Bereich im Studio auf.</p>
 			<ol id="tour">
@@ -379,6 +382,21 @@
 		</div>
 	</form>
 </dialog>
+
+<div id="tut" hidden>
+	<div class="tut-head" title="Hier anfassen zum Verschieben">
+		<img src="assets/juicy.png" alt="">
+		<b id="tutTitle"></b>
+		<span id="tutStep"></span>
+		<button id="tutClose" class="icon" type="button" title="Tutorial beenden">✕</button>
+	</div>
+	<div id="tutBody"></div>
+	<div id="tutTask"></div>
+	<div class="row end">
+		<button id="tutBack" type="button">◀ Zurück</button>
+		<button id="tutNext" class="primary" type="button">Weiter ▶</button>
+	</div>
+</div>
 
 <canvas id="fx" aria-hidden="true"></canvas>
 <script src="lrc.js"></script>

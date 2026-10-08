@@ -31,6 +31,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - Liedtext-Anzeige, Zeitleiste (Griff darunter) und Seitenleiste lassen sich in der Größe ziehen, Doppelklick = Standard;
   ganz klein zeigt die Liedtext-Anzeige nur noch die aktuelle Zeile. Die Song-Felder lassen sich mit ▾ einklappen
 - Prüf-Werkzeuge (Zeiten verteilen, Enden schätzen, Mit Original-Lyrics vergleichen) oben links neben ▶
+- **🎓 Tutorial**: lädt einen kleinen Beispielsong und führt Schritt für Schritt durch alle Werkzeuge (Silben, Auffächern, Ziehen, Zeilenende, Reihenfolge, Original-Abgleich, Setzen, Pause, Klinge, Wörter einfügen); auch Audio und LRC wählen, Fehler in der Wortliste und den Loop; ein blinkender roter Pfeil zeigt, was zu bedienen ist, und jede Aufgabe hakt sich selbst ab. Startbar auch auf der Startseite; am Ende geht es direkt zum eigenen Ordner, Audio oder LRC
 - **?** öffnet Rundgang und Hilfe: die Seitenleiste klappt dafür rechts über die volle Höhe nach oben, nochmal **?** = zurück
 - **📁 Ordner** (Button oder Ordner ins Fenster ziehen): zeigt, welches Audio zu welcher LRC gehört, und legt fehlende LRCs direkt im Ordner an;
   mit ◀ ▶ oder der Liste durch die Songs blättern (rundherum), vorher fragt es nach Speichern / Verwerfen
@@ -49,7 +50,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - **🎉 Fertig:** fragt einmal nach deinem Namen, trägt ihn als `[by:]` und `[status:Fertig]` in die LRC ein, speichert –
   und feiert mit Konfetti, Blasen und Musik
 
-Unter **?** gibt es einen Rundgang durch die Bereiche (Maus auf einen Eintrag = der Bereich leuchtet auf) und alle Tasten.
+Zum Kennenlernen am besten **🎓** (oben rechts) – das Tutorial mit Beispielsong. Unter **?** gibt es einen Rundgang durch die Bereiche (Maus auf einen Eintrag = der Bereich leuchtet auf) und alle Tasten.
 
 ## Dateien
 | Datei | Inhalt |

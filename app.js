@@ -48,6 +48,7 @@ let folder = null;              // opened folder: {name, songs: [{key, audio: [F
 let newTarget = null;           // {dir, name}: a new LRC made from the folder list is saved there
 let refRaw = '', refLines = null;  // original lyrics as pasted / cleaned lines (null = no comparison), see runRef
 let refDiffs = [], refAt = new Map(), refSkip = new Set();
+let tut = null;                 // tutorial running: {i, s, done} (step, its state), see startTut
 let sylAt = new Map();          // 'li:ti' -> syllables suggested for a word sung as one piece (option Silben vorschlagen)
 
 const tapComp = () => (+$('tapComp').value || 0) / 1000;
@@ -164,6 +165,7 @@ let draftTimer = 0;
 
 function saveDraftSoon() {
 	clearTimeout(draftTimer);
+	if (tut) return;                         // the tutorial song never becomes a draft
 	draftTimer = setTimeout(() => {
 		if (!dirty) return;
 		try {
@@ -1217,7 +1219,8 @@ function renderWords() {
 			'<div><i>2</i><b>LRC öffnen</b> oder <b>Neu aus Text</b></div>' +
 			'<div><i>3</i>Zeile wählen, <b>✎ Zeile bearbeiten</b>: <b>Rechtsklick</b> in die Zeitleiste spielt an, ' +
 			'<b>Linksklick</b> setzt, <b>OK</b>. Oder <b>T</b> und mit der Leertaste mittippen.</div>' +
-			'</div><p>Alles bleibt auf deinem Rechner. Audio und LRC lassen sich auch ins Fenster ziehen.</p></div>';
+			'</div><p>Alles bleibt auf deinem Rechner. Audio und LRC lassen sich auch ins Fenster ziehen.</p>' +
+			'<button class="primary tut-start" type="button">🎓 Neu hier? Tutorial mit Beispielsong starten</button></div>';
 		return;
 	}
 	const html = [];
@@ -3449,6 +3452,307 @@ $('miniMap').addEventListener('click', e => {
 	goLine(li);
 });
 
+// ---------------------------------------------------------------- tutorial: a made-up example song, one step per tool
+// Each step points at its area, a red arrow blinks over what to use, it says what to try and ticks off by itself once
+// it is done (check). The song is built so every tool has something to do: a long word to split, a stack, a missing
+// end, two lines the wrong way round, a typo, an untimed line, a word with a pause in it and a line that is too long.
+
+const TUT_LRC = `[ti:Juicy im Studio]
+[ar:Juicy]
+[00:01.00]<00:01.00>Juicy <00:01.50>singt <00:02.00>im <00:02.40>Sonnenschein <00:04.20>
+[00:05.00]<00:05.00>Alle <00:05.00>Wörter <00:05.00>auf <00:05.00>einmal <00:07.00>
+[00:08.00]<00:08.00>Der <00:08.40>Mond <00:09.00>tanst <00:09.60>mit
+Diese Zeile setzt du selbst
+[00:19.00]<00:19.00>Hier <00:19.50>stimmt <00:20.00>die <00:20.40>Reihenfolge <00:21.60>nicht <00:22.20>
+[00:15.00]<00:15.00>Ich <00:15.40>komme <00:15.90>eigentlich <00:16.70>zuerst <00:17.40>
+[00:24.00]<00:24.00>Kurz <00:24.50>Pause <00:26.40>und <00:26.80>weiter <00:27.40>geht's <00:28.20>
+[00:30.00]<00:30.00>Eine <00:30.40>lange <00:30.90>Zeile <00:31.40>wird <00:31.80>hier <00:32.20>in <00:32.40>zwei <00:32.90>geteilt <00:34.00>
+`;
+const TUT_REF = `Juicy singt im Sonnenschein
+Alle Wörter auf einmal
+Der Mond tanzt mit
+Diese Zeile setzt du selbst
+Ich komme eigentlich zuerst
+Hier stimmt die Reihenfolge nicht
+Kurz Pause und weiter geht's
+Eine lange Zeile wird hier in zwei geteilt`;
+
+// the line that starts with these words (lines move and change during the tutorial), -1 if none
+const tutLine = s => doc.lines.findIndex(ln => LRC.lineText(ln, false).replace(/\|/g, '').toLowerCase().startsWith(s.toLowerCase()));
+const tutTok = (s, w) => {                // [li, ti] of the word w in that line
+	const li = tutLine(s);
+	return li < 0 ? [-1, -1] : [li, doc.lines[li].tokens.findIndex(k => k.text.replace(/[^\p{L}']/gu, '') === w)];
+};
+const tutShow = s => { const li = tutLine(s); if (li >= 0) { if (!edit) goLine(li); showLine(li); } };
+const tutEl = (s, w) => { const [li, ti] = tutTok(s, w); return li >= 0 && ti >= 0 && tokEls[li] ? tokEls[li][ti] : null; };
+const tutTimes = () => JSON.stringify(doc.lines.map(l => l.tokens.map(k => [k.t, k.end])));
+// something drawn in the timeline (a word box, a button), as a rect on the page
+const tutCv = o => { if (!o) return null; const r = tl.getBoundingClientRect(); return {left: r.left + o.x0, top: r.top + o.y0, width: o.x1 - o.x0, height: o.y1 - o.y0}; };
+const tutBody = (s, w) => { const [li, ti] = tutTok(s, w); return tutCv(bodies.find(o => o.li === li && o.ti === ti)); };
+
+const TUT = [
+	{title: 'Willkommen im Studio!', area: () => $('stage'),
+		html: 'Ich führe dich mit einem kleinen Beispielsong durch das Studio: <i>Juicy im Studio</i>. Der <b class="tut-err">rote Pfeil</b> ' +
+			'zeigt immer auf das, was du bedienen sollst. Oben ist die <b>Zeitleiste</b> mit den Wörtern und ihren Zeiten, ' +
+			'darunter die <b>Wortliste</b>, rechts die <b>Prüfung</b>.<br>Diese Karte kannst du oben anfassen und verschieben.'},
+	{title: 'Audio auswählen', area: () => document.querySelector('header .files'), point: () => $('btnAudio'),
+		html: 'Mit <b>♪ Audio</b> wählst du deinen Song aus (mp3, wav, flac, m4a …). Er bleibt auf deinem Rechner, nichts wird hochgeladen. ' +
+			'Du kannst die Datei auch einfach ins Fenster ziehen. Dann siehst du die Wellenform und hörst mit <b>▶</b> und Rechtsklick rein.<br>' +
+			'Für das Tutorial brauchst du kein Audio – das Beispiel geht auch ohne.'},
+	{title: 'LRC auswählen oder neu anlegen', area: () => document.querySelector('header .files'), point: () => [$('btnOpen'), $('btnNew')],
+		html: '<b>LRC öffnen</b> lädt eine fertige oder halbfertige LRC-Datei. Hast du nur den Songtext, nimm <b>Neu aus Text</b> und ' +
+			'füg ihn ein – eine Zeile pro Bildschirmzeile. Mit <b>📁 Ordner</b> öffnest du gleich einen ganzen Ordner: Das Studio zeigt, ' +
+			'welches Audio zu welcher LRC gehört, und du blätterst mit ◀ ▶ durch die Songs.<br>Den Beispielsong habe ich schon für dich geladen.'},
+	{title: 'Zeitleiste bewegen', area: () => $('timeline'), point: () => $('timeline'),
+		html: '<b>Mausrad</b> über der Zeitleiste = zoomen, <b>Shift + Mausrad</b> oder im Leeren ziehen = blättern. ' +
+			'Die schmale <b>Übersicht</b> darüber zeigt den ganzen Song, ein Klick springt dorthin.',
+		task: 'Zoome einmal mit dem Mausrad hinein oder heraus.',
+		setup: s => { s.span = view.span; }, check: s => Math.abs(view.span - s.span) > 0.01},
+	{title: 'Wörter markieren', area: () => $('words'), point: () => tutEl('Der Mond', 'Mond'),
+		html: 'In der Wortliste steht jede Zeile mit Nummer, Startzeit und ihren Wörtern. Ein <b>Klick</b> auf ein Wort markiert es, ' +
+			'die Zeitleiste springt mit. Mit <b>← →</b> gehst du Wort für Wort weiter.',
+		task: 'Klick in der Wortliste auf <i>Mond</i> in Zeile 3.',
+		check: () => { const [li, ti] = tutTok('Der Mond', 'Mond'); return !!sel && sel.li === li && sel.ti === ti; }},
+	{title: 'Fehler in der Wortliste', area: () => $('words'), setup: () => tutShow('Alle Wörter'),
+		point: () => [document.querySelector('#words .tok.err'), document.querySelector('#words .endmark.missing')],
+		html: 'Die Wortliste zeigt Fehler direkt am Wort: <b class="tut-err">rot</b> = Fehler (z. B. gleiche Zeit wie das Wort davor), ' +
+			'<b class="tut-warn">orange</b> = Warnung, <b>grau</b> = noch keine Zeit. Ein <b>⏹ Ende</b> mit <i>?</i> heißt: Das Zeilenende fehlt. ' +
+			'Fährst du mit der Maus über ein Wort, steht der Grund im Tooltip. In der Zeitleiste sind dieselben Stellen rot bzw. orange, ' +
+			'und rechts in der <b>Prüfung</b> stehen alle als Liste.'},
+	{title: 'Silben trennen', area: () => tutEl('Juicy singt', 'Sonnenschein') || $('words'), setup: () => tutShow('Juicy singt'),
+		point: () => { const e = tutEl('Juicy singt', 'Sonnenschein'); return e && (e.querySelector('.tsyl') || e); },
+		html: '<i>Sonnenschein</i> wird lang gesungen, ist aber ein Stück. Die orangen Punkte zeigen, wo man es trennen könnte: ' +
+			'<i>Son·nen·schein</i>. Das runde <b>✂</b> links oben trennt alle Silben auf einmal. Fährst du über <b>einen</b> Punkt, ' +
+			'erscheint darunter ✂ – ein Klick trennt nur dort. Die Zeit des Wortes wird auf die Silben aufgeteilt.<br>' +
+			'Der Knopf <b>Sil·ben</b> über der Liste schaltet die Vorschläge an und aus.',
+		task: 'Trenne <i>Sonnenschein</i> – ganz oder nur an einem Punkt.',
+		check: () => { const li = tutLine('Juicy singt'); return li >= 0 && doc.lines[li].tokens.length > 4; }},
+	{title: 'Gestapelte Wörter auffächern', area: () => $('timeline'), setup: () => tutShow('Alle Wörter'),
+		point: () => { const li = tutLine('Alle Wörter'); return tutCv(fanBtns.find(b => b.li === li)); },
+		html: 'In Zeile 2 haben alle vier Wörter dieselbe Zeit: Sie liegen <b class="tut-err">rot</b> übereinander. ' +
+			'Klick auf den Knopf <b>⇔ 4 Wörter auffächern</b> über dem Stapel: Jedes Wort bekommt eine Länge nach seinem Text, ' +
+			'das Zeilenende rückt mit. Würde die Zeile in die nächste laufen, liegt sie rot leuchtend eine Ebene höher, bis du Platz machst.',
+		task: 'Fächere den Stapel in Zeile 2 auf.',
+		check: () => { const li = tutLine('Alle Wörter'); return li >= 0 && new Set(doc.lines[li].tokens.map(k => k.t)).size === doc.lines[li].tokens.length; }},
+	{title: 'Wörter und Zeilen ziehen', area: () => $('timeline'), setup: s => { tutShow('Alle Wörter'); s.v = tutTimes(); },
+		point: () => tutBody('Alle Wörter', 'Wörter'),
+		html: 'Fass in der Zeitleiste den <b>Balken unter einem Wort</b> an und zieh = Wort verschieben. Seine <b>Kanten</b> ' +
+			'machen es länger oder kürzer. Ziehst du ein Wort über seinen Nachbarn, liegt es rot eine Ebene höher, bis du es zurückschiebst.<br>' +
+			'Die <b>Zeilen-Box ganz unten</b> verschiebt die ganze Zeile mit allen Wörtern. Mit Audio spielt dabei die Stelle kurz an.<br>' +
+			'Vertan? <b>Strg+Z</b> nimmt es zurück.',
+		task: 'Verschiebe ein Wort oder eine Zeile.', check: s => tutTimes() !== s.v},
+	{title: 'Zeilenende bestätigen', area: () => endEls[tutLine('Der Mond')] || $('words'), setup: () => tutShow('Der Mond'),
+		point: () => { const e = endEls[tutLine('Der Mond')]; return e && (e.querySelector('.tok-ok') || e); },
+		html: 'Zeile 3 hat kein Ende: Nach <i>mit</i> steht <b>⏹ Ende</b> mit Fragezeichen, in der Zeitleiste ein gestrichelter Vorschlag <i>Ende?</i>. ' +
+			'Den Vorschlag kannst du in der Zeitleiste ziehen. Passt er, setzt der kleine <b>✓</b> am Ende in der Wortliste ihn fest.',
+		task: 'Setze das Ende von Zeile 3 mit ✓ fest.',
+		check: () => { const li = tutLine('Der Mond'); return li >= 0 && doc.lines[li].tokens[doc.lines[li].tokens.length - 1].end != null; }},
+	{title: 'Zeile an der falschen Stelle', area: () => $('timeline'), setup: () => tutShow('Ich komme'), point: () => tutCv(orderBtns[0]),
+		html: '<i>Ich komme eigentlich zuerst</i> steht im Text nach <i>Hier stimmt …</i>, beginnt aber früher. Unter ihr zeigt ein <b class="tut-warn">oranges Schild</b> ' +
+			'mit Pfeil, wo sie steht; rechts in der Prüfung steht es auch. Ein Klick auf das Schild sortiert alle Zeilen nach ihrer Zeit.',
+		task: 'Klick auf das orange Schild.', check: () => tutLine('Ich komme') >= 0 && tutLine('Ich komme') < tutLine('Hier stimmt')},
+	{title: 'Mit den Original-Lyrics vergleichen', area: () => $('btnRef'), setup: () => { if (!refRaw) refRaw = TUT_REF; tutShow('Der Mond'); },
+		point: () => !refLines ? $('btnRef') : tutEl('Der Mond', 'tanst'),
+		html: 'Tippfehler findet der <b>Vergleich mit dem Original</b>. Den Originaltext habe ich schon eingefügt – klick auf ' +
+			'<b>Mit Original-Lyrics vergleichen</b> und dann auf <b>Vergleichen</b>.<br>Danach ist <i>tanst</i> markiert. Fahr in der ' +
+			'Wortliste darüber: Oben erscheint <b>↔ tanzt</b>, ein Klick tauscht. Danach steht dort <b>↶ tanst</b> – damit tauschst du zurück. ' +
+			'Rechts im <i>Original-Abgleich</i> stehen alle Abweichungen mit Vorschlag.',
+		task: 'Vergleiche und tausche <i>tanst</i> gegen <i>tanzt</i>.', check: () => tutLine('Der Mond tanzt') >= 0},
+	{title: 'Loop an und aus', area: () => document.querySelector('header .transport'), point: () => [$('btnLoopMode'), $('btnLoop')],
+		setup: s => { s.m = loopMode; },
+		html: '<b>↻</b> neben ▶ ist der <b>Loop-Modus</b>: an (leuchtet) = die markierte Zeile läuft beim Abspielen immer im Loop, ' +
+			'wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Song läuft durch.<br>' +
+			'<b>↻ Zeile loopen</b> über der Wortliste (Taste <b>L</b>) spielt die markierte Zeile einmal im Loop, mit etwas Vor- und Nachlauf. ' +
+			'<b>Esc</b> stoppt. Das hörst du natürlich erst mit Audio.',
+		task: 'Schalte den Loop-Modus mit ↻ einmal um.', check: s => loopMode !== s.m},
+	{title: 'Eine Zeile selbst setzen', area: () => $('modeBar'), setup: () => tutShow('Diese Zeile'),
+		point: () => editing(tutLine('Diese Zeile')) ? $('timeline') : $('btnEdit'),
+		html: '<i>Diese Zeile setzt du selbst</i> hat noch keine Zeiten (grau). Sie ist markiert – drück <b>B</b> (oder ✎ Zeile bearbeiten). ' +
+			'Jetzt hängt das erste Wort an der Maus: Jeder <b>Linksklick</b> in die Zeitleiste setzt ein Wort, zum Schluss das <b>Ende</b>. ' +
+			'Mit Audio hörst du vorher mit <b>Rechtsklick</b> rein. <b>Enter</b> = OK übernimmt, <b>Esc</b> bricht ab.<br>' +
+			'Mit Audio geht es auch im Takt: <b>T</b> schaltet <i>Leertaste tippt</i> an, dann setzt jeder Druck auf die Leertaste das nächste Wort.',
+		task: 'Setze alle fünf Wörter und das Ende, dann Enter.',
+		check: () => {
+			const li = tutLine('Diese Zeile');
+			if (li < 0 || editing(li)) return false;
+			const tk = doc.lines[li].tokens;
+			return tk.every(k => k.t != null) && tk[tk.length - 1].end != null;
+		}},
+	{title: 'Pause in ein Wort', area: () => $('btnPause'), setup: () => tutShow('Kurz Pause'),
+		point: () => pauser ? tutBody('Kurz', 'Pause') : $('btnPause'),
+		html: 'In Zeile 7 ist <i>Pause</i> fast zwei Sekunden lang – gesungen wird es aber kurz, danach ist Stille. ' +
+			'Schalte das <b>⏸ Pause</b>-Werkzeug an (Taste <b>P</b>) und klick in der Zeitleiste in das Wort <i>Pause</i>, wo es enden soll. ' +
+			'Bis zum nächsten Wort ist dann Pause (grüne Marke, lässt sich ziehen). <b>Esc</b> schaltet das Werkzeug aus.',
+		task: 'Lass <i>Pause</i> mit dem Pause-Werkzeug früher enden.',
+		check: () => { const [li, ti] = tutTok('Kurz', 'Pause'); return li >= 0 && ti >= 0 && doc.lines[li].tokens[ti].end != null; }},
+	{title: 'Zeile teilen', area: () => $('btnSplit'), setup: () => { setPauser(false); tutShow('Eine lange'); },
+		point: () => {
+			if (!blade) return $('btnSplit');
+			const a = tutBody('Eine lange', 'hier'), b = tutBody('Eine lange', 'in');
+			return a && b ? {left: (a.left + a.width + b.left) / 2 - 1, top: b.top, width: 2, height: b.height} : null;
+		},
+		html: 'Die letzte Zeile ist zu lang für den Bildschirm. Schalte die <b>✂ Klinge</b> an (Taste <b>X</b>) und klick in der Zeitleiste ' +
+			'zwischen <i>hier</i> und <i>in</i> – wie beim Schneiden eines Clips. Die Zeile wird dort in zwei Zeilen geteilt.',
+		task: 'Teile die lange Zeile in zwei.', check: () => tutLine('Eine lange') >= 0 && doc.lines[tutLine('Eine lange')].tokens.length < 8},
+	{title: 'Wörter löschen und einfügen', area: () => tutEl('Juicy singt', 'im') || $('words'), point: () => tutEl('Juicy singt', 'im'),
+		setup: s => { setBlade(false); tutShow('Juicy singt'); s.n = LRC.flat(doc).length; },
+		html: 'Fahr in der Wortliste über ein Wort: Das kleine <b>×</b> löscht es, das <b>+</b> rechts daneben fügt dahinter ein neues ein. ' +
+			'Es bekommt gleich eine Zeit mitten zwischen seinen Nachbarn und steht so schon in der Zeitleiste. ' +
+			'<b>Doppelklick</b> (oder F2) auf ein Wort ändert seinen Text, <code>|</code> trennt Silben.',
+		task: 'Füge mit + ein Wort ein (z. B. <i>hellen</i> nach <i>im</i>).', check: s => LRC.flat(doc).length > s.n},
+	{title: 'Prüfung und nächster Fehler', area: () => $('issues'), point: () => [$('issues'), $('btnNext')],
+		html: 'Rechts listet die <b>Prüfung</b> alles, was noch nicht stimmt: rot = Fehler, orange = Warnung. Ein Klick springt hin. ' +
+			'<b>N</b> (oder <i>Nächster Fehler ⏭</i>) geht zur nächsten Zeile mit Problemen. ' +
+			'<b>Zeiten verteilen</b> und <b>Enden schätzen</b> oben helfen bei vielen Fällen auf einmal.<br>' +
+			'Mehrere Zeilen neu setzen: Zeilennummern anklicken (Shift = Bereich) und <b>Reparieren</b> (R).'},
+	{title: 'Speichern und fertig', area: () => document.querySelector('header .files'), point: () => [$('btnSave'), $('btnDone')],
+		html: '<b>Speichern</b> (Strg+S) schreibt die LRC – sie muss heißen wie das Audio, das Studio schlägt den Namen vor. ' +
+			'Sitzt alles, trägt <b>🎉 Fertig</b> deinen Namen ein und speichert.<br>' +
+			'Alle Tasten stehen unter <b>?</b>. Das Tutorial findest du jederzeit wieder unter 🎓.'},
+	{title: 'Jetzt dein Song!', area: () => document.querySelector('header .files'), point: () => [$('btnFolder'), $('btnAudio'), $('btnOpen')],
+		html: 'Geschafft! 🎉 Jetzt wählst du dein <b>Original-Audio</b> und deine <b>LRC</b> aus – oder gleich den <b>ganzen Ordner</b>, ' +
+			'in dem deine Audio- und LRC-Dateien liegen. Dann zeigt das Studio, was zusammengehört und wo noch eine LRC fehlt.' +
+			'<div class="tut-go"><button class="primary" data-go="btnFolder">📁 Ganzen Ordner öffnen</button>' +
+			'<button data-go="btnAudio">♪ Audio wählen</button><button data-go="btnOpen">LRC öffnen</button>' +
+			'<button data-go="btnNew">Neu aus Text</button></div>'},
+];
+
+let tutHl = null;
+function tutArea(el) {
+	if (tutHl) tutHl.classList.remove('tour-hl');
+	tutHl = el || null;
+	if (tutHl) tutHl.classList.add('tour-hl');
+}
+
+// the blinking red arrows: over the target pointing down, or under it pointing up when there is no room above
+const tutArrows = [];
+function tutPlace() {
+	let list = [];
+	if (tut) {
+		const st = TUT[tut.i];
+		const p = tut.done ? $('tutNext') : st.point && !$('dlgRef').open ? st.point() : null;    // done: on to Weiter
+		list = (Array.isArray(p) ? p : [p]).filter(Boolean);
+	}
+	list.forEach((p, i) => {
+		let a = tutArrows[i];
+		if (!a) {
+			a = tutArrows[i] = document.createElement('div');
+			a.className = 'tut-arrow';
+			a.innerHTML = '<svg viewBox="0 0 34 46" aria-hidden="true"><path d="M10 2h14v22h8L17 44 2 24h8z"/></svg>';
+			document.body.append(a);
+		}
+		const r = p.getBoundingClientRect ? p.getBoundingClientRect() : p;
+		const up = r.top < 56, x = r.left + r.width / 2 - 17;
+		const off = r.top + r.height < 0 || r.top > innerHeight || (!r.width && !r.height);
+		a.hidden = off;
+		a.classList.toggle('up', up);
+		a.style.left = Math.max(2, Math.min(innerWidth - 36, x)) + 'px';
+		a.style.top = (up ? r.top + r.height + 4 : r.top - 50) + 'px';
+	});
+	for (let i = list.length; i < tutArrows.length; i++) tutArrows[i].hidden = true;
+}
+function tutPoint() {
+	tutPlace();
+	if (tut) requestAnimationFrame(tutPoint);
+}
+
+async function startTut() {
+	if (!await askSave()) return;
+	if (edit) endEdit(false);
+	setBlade(false);
+	setPauser(false);
+	newTarget = null;
+	refRaw = '';
+	try { $('settings').hidePopover(); } catch (e) { /* not open */ }
+	$('sylMode').value = 'auto';
+	$('sylMode').onchange();
+	const wasOn = !!tut;
+	tut = {i: 0, s: {}, done: false};
+	const d = LRC.parse(TUT_LRC), at = s => d.lines.find(ln => LRC.lineText(ln, false).startsWith(s));
+	// loading sorts the lines by time: put 'Hier stimmt' back before 'Ich komme', for the order step
+	d.lines = ['Juicy', 'Alle', 'Der', 'Diese', 'Hier', 'Ich', 'Kurz', 'Eine'].map(at);
+	setDoc(d, 'Juicy im Studio.lrc', null);
+	view.span = 8;
+	$('tut').hidden = false;
+	$('btnTut').classList.add('on');
+	tutGo(0);
+	if (!wasOn) requestAnimationFrame(tutPoint);
+}
+
+function tutGo(i) {
+	if (!tut) return;
+	tut.i = Math.max(0, Math.min(TUT.length - 1, i));
+	const st = TUT[tut.i];
+	tut.s = {};
+	tut.done = false;
+	if (st.setup) st.setup(tut.s);
+	$('tutTitle').textContent = st.title;
+	$('tutStep').textContent = (tut.i + 1) + ' / ' + TUT.length;
+	$('tutBody').innerHTML = st.html;
+	$('tutBack').disabled = tut.i === 0;
+	$('tutNext').textContent = tut.i === TUT.length - 1 ? 'Fertig ✓' : 'Weiter ▶';
+	tutTick();
+	let p = st.point && st.point();                  // what the arrow points at, else the highlighted area, comes into view
+	if (Array.isArray(p)) p = p[0];
+	const go = p && p.scrollIntoView ? p : tutHl;
+	if (go) go.scrollIntoView({block: 'nearest'});
+}
+
+// a few times a second: the task ticks off once done, the highlight follows the word list being redrawn
+function tutTick() {
+	if (!tut) return;
+	const st = TUT[tut.i];
+	if (st.check && !tut.done) tut.done = !!st.check(tut.s);
+	$('tutTask').hidden = !st.task;
+	$('tutTask').innerHTML = st.task ? (tut.done ? '✓ ' : '👉 ') + st.task : '';
+	$('tutTask').classList.toggle('done', tut.done);
+	$('tutNext').classList.toggle('go', tut.done);
+	const el = st.area && st.area();
+	if (el !== tutHl || (el && !el.classList.contains('tour-hl'))) tutArea(el);
+}
+setInterval(tutTick, 250);
+
+function endTut() {
+	if (!tut) return;
+	tut = null;
+	tutArea(null);
+	$('tut').hidden = true;
+	$('btnTut').classList.remove('on');
+	tutPlace();
+	setDoc({meta: [], lines: [], warnings: []}, '', null);    // the example song goes, it needs no saving
+	refRaw = '';
+	hint('Jetzt dein Song: 📁 Ordner mit Audio und LRC öffnen – oder ♪ Audio und LRC öffnen bzw. Neu aus Text.');
+}
+
+$('btnTut').onclick = () => tut ? endTut() : startTut();
+$('helpTut').onclick = () => { if (!$('help').hidden) $('btnHelp').onclick(); startTut(); };
+$('tutNext').onclick = () => tut.i === TUT.length - 1 ? endTut() : tutGo(tut.i + 1);
+$('tutBack').onclick = () => tutGo(tut.i - 1);
+$('tutClose').onclick = endTut;
+// last step: straight on to the user's files (the click is still the user's, so the file picker may open)
+$('tutBody').addEventListener('click', e => {
+	const b = e.target.closest('[data-go]');
+	if (!b) return;
+	endTut();
+	$(b.dataset.go).click();
+});
+$('splashTut').addEventListener('click', () => startTut());
+$('words').addEventListener('click', e => { if (e.target.closest('.tut-start')) startTut(); });
+// the card is moved by its head
+document.querySelector('.tut-head').addEventListener('pointerdown', e => {
+	if (e.target.closest('button')) return;
+	const card = $('tut'), r = card.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+	const mv = ev => {
+		card.style.left = Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx)) + 'px';
+		card.style.top = Math.max(0, Math.min(innerHeight - 40, ev.clientY - dy)) + 'px';
+		card.style.right = card.style.bottom = 'auto';
+	};
+	const up = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); };
+	addEventListener('pointermove', mv);
+	addEventListener('pointerup', up);
+	e.preventDefault();
+});
+
 // ---------------------------------------------------------------- splash: Juicy and the start jingle
 // Browsers only let a page make sound after a click or key, so if the jingle is blocked the splash waits for one.
 (function splash() {
@@ -3484,9 +3788,12 @@ $('miniMap').addEventListener('click', e => {
 	const key = e => { e.preventDefault(); e.stopPropagation(); go(); };
 	window.addEventListener('keydown', key, true);
 	el.addEventListener('click', go);
-	if (!on) { timer = setTimeout(close, 1400); return; }
+	let stay = false;                                // the mouse on the splash: it waits for a click (Studio / Tutorial)
+	el.addEventListener('pointerenter', () => { stay = true; clearTimeout(timer); el.classList.add('wait'); });
+	const auto = () => { if (!stay) close(); };
+	if (!on) { timer = setTimeout(auto, 1400); return; }
 	snd.play().then(() => {
 		el.classList.add('playing');
-		timer = setTimeout(close, 1900);
+		timer = setTimeout(auto, 1900);
 	}).catch(() => el.classList.add('wait'));
 })();
