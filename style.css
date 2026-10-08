@@ -362,6 +362,7 @@ body.side-left main { flex-direction: row-reverse; }      /* ⇆: side panel lef
 #hint:empty { display: none; }
 #btnLoop.on { background: var(--ok); color: var(--ink); border-color: transparent; }
 #btnRepair.on { background: var(--accent); color: var(--ink); }
+#btnSyl.on { background: var(--accent); color: var(--ink); border-color: transparent; }
 
 #words, #raw, aside {
 	background: var(--panel);
@@ -480,8 +481,38 @@ body.editing .line:not(.editing) { opacity: 0.32; }
 	visibility: hidden;
 	box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.7);
 }
-.tsug.syl { background: var(--accent); }
-.tok.sylw .w { text-decoration: underline dotted var(--accent); text-underline-offset: 4px; }
+/* syllable suggestion: orange dots where the word could be split, ✂ in the corner splits it */
+.sdot { position: relative; color: var(--accent); font-style: normal; font-weight: 700; margin: 0 1px; padding: 0 2px; cursor: pointer; }
+.sdot:hover { color: var(--text-hi); }
+.sdot:hover::after {                       /* ✂ under the dot: a click splits the word just here */
+	content: '✂';
+	position: absolute;
+	top: 100%;
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 1px 4px;
+	border-radius: 6px;
+	background: var(--accent);
+	color: var(--ink);
+	font-size: 11px;
+	z-index: 4;
+}
+.tsyl {
+	position: absolute;
+	top: -6px;
+	left: -6px;
+	display: grid;
+	place-items: center;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: var(--ink);
+	font: 10px/1 var(--font);
+	cursor: pointer;
+	z-index: 2;
+}
+.tsyl:hover { filter: brightness(1.2); transform: scale(1.15); }
 .tsug.back { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-hi); font-weight: 600; }
 .tok:hover .tsug { visibility: visible; }
 .tsug:hover { filter: brightness(1.15); }

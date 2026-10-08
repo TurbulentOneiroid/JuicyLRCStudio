@@ -1197,6 +1197,15 @@ function delLine(li) {
 
 let lineEls = [], tokEls = [], endEls = [];
 
+// a word with suggested syllables: an orange dot at every split, hover shows ✂ under it, a click splits just there
+function sylHtml(ps) {
+	let at = 0;
+	return ps.map((p, i) => {
+		at += p.length;
+		return esc(p) + (i < ps.length - 1 ? '<i class="sdot" data-tact="cut" data-at="' + at + '" title="Nur hier trennen">·</i>' : '');
+	}).join('');
+}
+
 function renderWords() {
 	const box = $('words');
 	lineEls = [];
@@ -1237,12 +1246,12 @@ function renderWords() {
 				(rd ? ' rd-' + rd.kind : '') + (rm ? ' rd-miss' : '') + (ra ? ' rd-miss-after' : '');
 			const rt = [rd, rm, ra].filter(Boolean).map(refTitle).join(' · ');
 			html.push('<span class="' + cls + '" data-li="' + li + '" data-ti="' + ti + '"' + (rt ? ' title="' + esc(rt) + '"' : '') +
-				'><span class="w">' + esc(k.text) +
+				'><span class="w">' + (sy ? sylHtml(sy) : esc(k.text)) +
 				'</span><small>' + (k.t != null ? LRC.fmt(k.t) : ghostText(li, ti)) + '</small>' +
 				'<b class="tx" data-tact="del" title="Wort löschen">×</b><b class="tadd" data-tact="add" title="Wort danach einfügen">+</b>' +
 				(rd && rd.kind === 'sub' && rd.ti0 === ti ? '<b class="tsug" data-tact="swap" title="Gegen das Original tauschen">↔ ' + esc(rd.want) + '</b>'
 					: k.was != null ? '<b class="tsug back" data-tact="swap" title="Zurück zum Wort von vorher">↶ ' + esc(k.was.replace(/\|/g, '')) + '</b>'
-					: sy ? '<b class="tsug syl" data-tact="split" title="In Silben trennen, die Zeit des Wortes wird aufgeteilt">✂ ' + esc(sy.join('·')) + '</b>' : '') +
+					: '') + (sy ? '<b class="tsyl" data-tact="split" title="In Silben trennen: ' + esc(sy.join('|')) + ' – die Zeit des Wortes wird aufgeteilt">✂</b>' : '') +
 				'</span>');
 			const last = ti === ln.tokens.length - 1;
 			if (last || k.end != null) {
@@ -2027,7 +2036,7 @@ function timeInserted(li, at, n, endB = null) {
 }
 
 // the small buttons on a word: × deletes it, + adds a word after it; ✓ on a missing line end takes it as it is
-function tokAction(act, li, ti) {
+function tokAction(act, li, ti, at0 = null) {
 	const ln = doc.lines[li], k = ln.tokens[ti];
 	if (act === 'del') {
 		pushUndo();
@@ -2077,9 +2086,10 @@ function tokAction(act, li, ti) {
 			changed();
 			hint('„' + now + '“ → „' + k.was.replace(/\|/g, '') + '“ zurückgetauscht');
 		}
-	} else if (act === 'split') {                 // syllables: the word's time shared by the length of each piece
-		const ps = sylAt.get(li + ':' + ti);
+	} else if (act === 'split' || act === 'cut') {   // syllables: the word's time shared by the length of each piece
+		let ps = sylAt.get(li + ':' + ti);
 		if (!ps) return;
+		if (act === 'cut') ps = [k.text.slice(0, at0), k.text.slice(at0)];      // just at this one point
 		const e = k.t != null ? boxEnd(li, ti) : null;
 		pushUndo();
 		const nt = ps.map((text, i) => ({text, t: null, end: null, glue: i ? true : k.glue}));
@@ -2107,9 +2117,9 @@ function tokAction(act, li, ti) {
 $('words').addEventListener('click', e => {
 	const ta = e.target.closest('[data-tact]');
 	if (ta) {
-		const host = ta.parentElement, li = +host.dataset.li;
+		const host = ta.closest('.tok, .endmark'), li = +host.dataset.li;
 		if (edit && li !== edit.li) { lockedHint(); return; }
-		tokAction(ta.dataset.tact, li, +host.dataset.ti);
+		tokAction(ta.dataset.tact, li, +host.dataset.ti, ta.dataset.at != null ? +ta.dataset.at : null);
 		return;
 	}
 	const btn = e.target.closest('button[data-act]');
@@ -3179,22 +3189,29 @@ function runSyl() {
 	if (m === 'off') return;
 	const lang = m === 'auto' ? LRC.guessLang(doc) : m;
 	doc.lines.forEach((ln, li) => ln.tokens.forEach((k, ti) => {
-		if (k.glue || (ln.tokens[ti + 1] && ln.tokens[ti + 1].glue)) return;     // already split
 		const ps = LRC.syllables(k.text, lang);
 		if (ps.length < 2) return;
 		const e = k.t != null ? boxEnd(li, ti) : null;
-		if (e != null && e - k.t < 0.2 * ps.length) return;                       // too short to sing in pieces
+		if (e != null && e - k.t < 0.3) return;                                    // too short to sing in pieces
 		sylAt.set(li + ':' + ti, ps);
 	}));
 }
+// on at every start (automatic language); the button above the words and the setting switch it
+let sylLast = 'auto';
 $('sylMode').onchange = () => {
-	try { localStorage.setItem('lrcEditorSyl', $('sylMode').value); } catch (e) { /* ignore */ }
+	if ($('sylMode').value !== 'off') sylLast = $('sylMode').value;
+	$('btnSyl').classList.toggle('on', $('sylMode').value !== 'off');
 	changed(false);
-	if ($('sylMode').value !== 'off') hint(sylAt.size ? sylAt.size + ' Wörter könnten Silben haben: gepunktet unterstrichen, über dem Wort ✂ = trennen.' :
+	if ($('sylMode').value !== 'off') hint(sylAt.size ? sylAt.size + (sylAt.size === 1 ? ' Wort könnte' : ' Wörter könnten') + ' Silben haben: orange Punkte zeigen die Trennung, ✂ am Wort trennt es.' :
 		'Keine Wörter gefunden, die noch Silben brauchen.');
 };
-try { const s = localStorage.getItem('lrcEditorSyl'); if (s) $('sylMode').value = s; } catch (e) { /* ignore */ }
-if ($('sylMode').value !== 'off') changed(false);
+$('btnSyl').onclick = () => {
+	$('sylMode').value = $('sylMode').value === 'off' ? sylLast : 'off';
+	$('sylMode').onchange();
+	if ($('sylMode').value === 'off') hint('Silben-Vorschläge aus.');
+};
+$('sylMode').value = 'auto';
+changed(false);
 
 function refTitle(d) {
 	return d.kind === 'sub' ? 'Original: „' + d.want + '“' : d.kind === 'extra' ? 'Steht nicht im Original' :
