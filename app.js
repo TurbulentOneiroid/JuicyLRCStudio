@@ -1235,7 +1235,11 @@ function renderWords() {
 			const rt = [rd, rm, ra].filter(Boolean).map(refTitle).join(' · ');
 			html.push('<span class="' + cls + '" data-li="' + li + '" data-ti="' + ti + '"' + (rt ? ' title="' + esc(rt) + '"' : '') +
 				'><span class="w">' + esc(k.text) +
-				'</span><small>' + (k.t != null ? LRC.fmt(k.t) : ghostText(li, ti)) + '</small></span>');
+				'</span><small>' + (k.t != null ? LRC.fmt(k.t) : ghostText(li, ti)) + '</small>' +
+				'<b class="tx" data-tact="del" title="Wort löschen">×</b><b class="tadd" data-tact="add" title="Wort danach einfügen">+</b>' +
+				(rd && rd.kind === 'sub' && rd.ti0 === ti ? '<b class="tsug" data-tact="swap" title="Gegen das Original tauschen">↔ ' + esc(rd.want) + '</b>'
+					: k.was != null ? '<b class="tsug back" data-tact="swap" title="Zurück zum Wort von vorher">↶ ' + esc(k.was.replace(/\|/g, '')) + '</b>' : '') +
+				'</span>');
 			const last = ti === ln.tokens.length - 1;
 			if (last || k.end != null) {
 				const le = issueAt.get(li + ':' + ti + ':e');
@@ -1246,7 +1250,8 @@ function renderWords() {
 				html.push('<span class="' + ecls + '" data-li="' + li + '" data-ti="' + ti + '" data-end="1" title="' +
 					(sg != null ? 'Zeilenende fehlt. Vorschlag ' + LRC.fmt(sg) + ' (OK beim Bearbeiten übernimmt ihn)' :
 						auto ? 'Kein Zeilenende nötig: die nächste Zeile folgt gleich' : last ? 'Zeilenende' : 'Pause') + '">' + sym +
-					'<small>' + (k.end != null ? LRC.fmt(k.end) : sg != null ? '≈' + LRC.fmt(sg) : auto ? '–' : '?') + '</small></span>');
+					'<small>' + (k.end != null ? LRC.fmt(k.end) : sg != null ? '≈' + LRC.fmt(sg) : auto ? '–' : '?') + '</small>' +
+					(last && k.end == null && !auto ? '<b class="tok-ok" data-tact="endok" title="Passt so: das Ende hier festsetzen">✓</b>' : '') + '</span>');
 			}
 		});
 		html.push('</div></div>');
@@ -2004,7 +2009,88 @@ function saveTapMode() {
 document.addEventListener('click', e => { if (e.target.closest('button, input[type=checkbox]')) e.target.blur(); });
 document.addEventListener('change', e => { if (e.target.type === 'checkbox') e.target.blur(); });
 
+// new words inserted after token at of line li get times evenly between that word and the next one (in a pause after
+// it: within the pause; after the last word: up to the line end), so they show in the timeline at once. Call after
+// the splice; nothing to share (no times around): they stay unset.
+function timeInserted(li, at, n, endB = null) {
+	const tk = doc.lines[li].tokens, prev = tk[at], next = tk[at + n + 1];
+	if (!prev || prev.t == null) return;
+	const last = !next, a = prev.end != null && !last ? prev.end : prev.t;
+	let b = next && next.t != null ? next.t : null;
+	if (last) b = tk[at + n].end != null ? tk[at + n].end : endB;      // endB: where the line ended before
+	if (b == null || b - a < 0.05 * (n + 1)) return;
+	for (let i = 1; i <= n; i++) tk[at + i].t = LRC.q(a + (b - a) * i / (n + 1));
+}
+
+// the small buttons on a word: × deletes it, + adds a word after it; ✓ on a missing line end takes it as it is
+function tokAction(act, li, ti) {
+	const ln = doc.lines[li], k = ln.tokens[ti];
+	if (act === 'del') {
+		pushUndo();
+		popEl(ln.tokens.length === 1 ? lineEls[li] : tokEls[li] && tokEls[li][ti]);
+		ln.tokens.splice(ti, 1);
+		const nx = ln.tokens[ti];
+		if (nx && nx.glue && !k.glue) nx.glue = false;          // the first syllable gone: the next one starts the word
+		if (k.end != null && ti === ln.tokens.length && ti > 0 && ln.tokens[ti - 1].end == null) ln.tokens[ti - 1].end = k.end;
+		if (!ln.tokens.length) doc.lines.splice(li, 1);
+		sel = null;
+		changed();
+		hint('„' + k.text + '“ gelöscht  (Strg+Z = zurück)');
+	} else if (act === 'add') {
+		let at = ti;
+		while (ln.tokens[at + 1] && ln.tokens[at + 1].glue) at++;   // after the whole word, not between its syllables
+		const v = prompt('Wort nach „' + ln.tokens.slice(ti, at + 1).map(x => x.text).join('') + '“ einfügen (Leerzeichen = mehrere, | trennt Silben)', '');
+		const nt = v ? LRC.tokensOf(v) : [];
+		if (!nt.length) return;
+		pushUndo();
+		nt[0].glue = false;
+		const last = ln.tokens[at], endB = at === ln.tokens.length - 1 ? boxEnd(li, at) : null;
+		if (at === ln.tokens.length - 1 && last.end != null) { nt[nt.length - 1].end = last.end; last.end = null; }    // the line end moves behind
+		ln.tokens.splice(at + 1, 0, ...nt);
+		timeInserted(li, at, nt.length, endB);
+		sel = {li, ti: at + 1, end: false};
+		changed();
+		hint('„' + v.trim() + '“ eingefügt' + (nt[0].t != null ? ' bei ' + LRC.fmt(nt[0].t) + ', mitten zwischen den Nachbarn – zum Feinstellen ziehen' :
+			' – noch ohne Zeit: setzen wie gewohnt') + '  (Strg+Z = zurück)');
+	} else if (act === 'swap') {                  // the original's word over it, or back to the word before
+		const d = refAt.get(li + ':' + ti);
+		if (d && d.kind === 'sub' && d.ti0 === ti) {
+			const was = ln.tokens.slice(d.ti0, d.ti1 + 1).map((x, i) => (i ? '|' : '') + x.text).join('');
+			applyRef(d);
+			const nk = doc.lines[li].tokens[ti];
+			nk.was = was;
+			renderWords();
+			hint('„' + was.replace(/\|/g, '') + '“ → „' + nk.text + '“  (noch mal auf den Vorschlag = zurück)');
+		} else if (k.was != null) {
+			pushUndo();
+			const nt = LRC.tokensOf(k.was);
+			nt[0].t = k.t;
+			nt[0].glue = k.glue;
+			nt[nt.length - 1].end = k.end;
+			const now = k.text;
+			ln.tokens.splice(ti, 1, ...nt);
+			sel = {li, ti, end: false};
+			changed();
+			hint('„' + now + '“ → „' + k.was.replace(/\|/g, '') + '“ zurückgetauscht');
+		}
+	} else if (act === 'endok') {
+		const e = boxEnd(li, ti);
+		if (e == null) { hint('Hier gibt es noch keine Zeit fürs Ende – mit E oder in der Zeitleiste setzen.'); return; }
+		pushUndo();
+		k.end = LRC.q(e);
+		changed();
+		hint('Zeilenende bei ' + LRC.fmt(k.end) + ' festgesetzt  (Strg+Z = zurück)');
+	}
+}
+
 $('words').addEventListener('click', e => {
+	const ta = e.target.closest('[data-tact]');
+	if (ta) {
+		const host = ta.parentElement, li = +host.dataset.li;
+		if (edit && li !== edit.li) { lockedHint(); return; }
+		tokAction(ta.dataset.tact, li, +host.dataset.ti);
+		return;
+	}
 	const btn = e.target.closest('button[data-act]');
 	if (!btn && e.target.closest('.ln')) {
 		pickLine(+e.target.closest('.line').dataset.li, e);
@@ -3102,8 +3188,10 @@ function applyRef(d, batch = false) {
 		}
 	} else if (d.kind === 'miss') {
 		const nk = {text: d.want, t: null, end: null, glue: false}, prev = ln.tokens[d.ti0 - 1];
+		const endB = prev && d.ti0 === ln.tokens.length ? boxEnd(d.li, d.ti0 - 1) : null;
 		if (d.ti0 === ln.tokens.length && prev && prev.end != null) { nk.end = prev.end; prev.end = null; }  // line end moves along
 		ln.tokens.splice(d.ti0, 0, nk);
+		if (d.ti0 > 0) timeInserted(d.li, d.ti0 - 1, 1, endB);
 	} else {
 		popEl(tokEls[d.li] && tokEls[d.li][d.ti0]);
 		const gone = ln.tokens.splice(d.ti0, d.ti1 - d.ti0 + 1), endK = gone[gone.length - 1];

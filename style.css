@@ -377,6 +377,7 @@ body.side-left main { flex-direction: row-reverse; }      /* ⇆: side panel lef
 	padding: 8px;
 }
 
+#words { padding-top: 26px; }               /* room for the swap suggestion over the words of the first line */
 #raw { display: flex; flex-direction: column; gap: 8px; }
 #raw[hidden] { display: none; }
 #rawApply { align-self: flex-end; }
@@ -442,6 +443,47 @@ body.editing .line:not(.editing) { opacity: 0.32; }
 }
 
 .tok:hover, .endmark:hover { background: rgba(255, 255, 255, 0.06); }
+.tok, .endmark { position: relative; }
+/* small buttons on a word: × delete (faint, clear on hover), + add a word after it (on hover), ✓ take a line end */
+.tx, .tadd, .tok-ok {
+	position: absolute;
+	display: grid;
+	place-items: center;
+	width: 15px;
+	height: 15px;
+	border-radius: 50%;
+	font: bold 11px/1 var(--font);
+	cursor: pointer;
+	z-index: 2;
+}
+.tx { top: -6px; right: -6px; background: var(--panel-solid); color: var(--dim); border: 1px solid var(--line-hi); opacity: 0.45; }
+.tok:hover .tx { opacity: 1; }
+.tx:hover { background: var(--err); color: var(--ink); border-color: transparent; }
+.tadd { top: 50%; right: -12px; transform: translateY(-50%); background: var(--ok); color: var(--ink); visibility: hidden; }
+.tok:hover .tadd { visibility: visible; }
+.tadd:hover { filter: brightness(1.2); }
+.tok-ok { top: -6px; right: -6px; background: var(--ok); color: var(--ink); }
+/* suggestion from the original over a word (on hover): a click swaps, on a swapped word it swaps back */
+.tsug {
+	position: absolute;
+	bottom: calc(100% - 3px);
+	left: 50%;
+	transform: translateX(-50%);
+	padding: 3px 9px;
+	border-radius: 9px;
+	background: #ff4f9a;
+	color: var(--ink);
+	font: bold 13px/1.2 var(--font);
+	white-space: nowrap;
+	cursor: pointer;
+	z-index: 3;
+	visibility: hidden;
+	box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.7);
+}
+.tsug.back { background: var(--panel-solid); color: var(--text); border: 1px solid var(--line-hi); font-weight: 600; }
+.tok:hover .tsug { visibility: visible; }
+.tsug:hover { filter: brightness(1.15); }
+.tok-ok:hover { filter: brightness(1.2); }
 .tok.glue { margin-left: -5px; border-left: 1px dashed #555a6a; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 .tok .w { font-size: 16px; color: var(--text-hi); }
 .tok small, .endmark small { font: 10px var(--mono); color: var(--dim); font-variant-numeric: tabular-nums; }
