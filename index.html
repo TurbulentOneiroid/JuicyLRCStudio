@@ -48,7 +48,6 @@
 			<button id="splashSimple" type="button" title="Ein schlankes Studio: Juicy führt dich Stelle für Stelle durch deinen Song">✨ Simple-Modus mit Assistent</button>
 			<span class="rec-badge">Empfohlen</span>
 		</div>
-		<button id="splashTut" type="button" title="Führt mit einem Beispielsong Schritt für Schritt durch alle Funktionen">🎓 Tutorial starten</button>
 		<div class="splash-bar"><i></i></div>
 	</div>
 </div>
@@ -138,6 +137,9 @@
 			<span><input id="endGap" type="number" value="0.5" step="0.1" min="0"> s</span></label>
 		<label title="Schlägt vor, Wörter in Silben zu trennen (Lie|be), wenn sie lang genug gesungen werden. Erkennung nach Regeln für Deutsch und Englisch, ohne Wörterbuch – nur ein Vorschlag">Silben vorschlagen
 			<select id="sylMode"><option value="off">aus</option><option value="auto" selected>automatisch</option><option value="de">Deutsch</option><option value="en">Englisch</option></select></label>
+		<h4>Zeitleiste</h4>
+		<label title="Wie stark ein Schritt am Mausrad oder Touchpad zoomt. 100 % = großer Schritt (Mausrad), Standard 15 %">Zoom-Tempo
+			<span><input id="zoomSens" type="number" value="15" step="5" min="1" max="300"> %</span></label>
 		<h4>Studio</h4>
 		<label title="Beim Öffnen den Juicy-Jingle spielen"><input id="jingleOn" type="checkbox" checked> Start-Sound</label>
 		<label title="Gelöschte Wörter, Zeilen und Zeiten zerplatzen mit einem Blub in aufsteigende Seifenblasen"><input id="bubblesOn" type="checkbox" checked> Blasen und Blub beim Löschen</label>
@@ -183,6 +185,10 @@
 			<button id="btnVoice" title="Stimme der ausgewählten Zeilen setzen (V): v1, v2 … / M, F, D / bg = Hintergrund">Stimme</button>
 			<button id="btnSplit" title="Klinge an / aus (X): Klick in die Zeitleiste teilt die Zeile genau dort in zwei – wie einen Clip im Schnittprogramm">✂ Teilen</button>
 			<button id="btnPause" title="Pause-Werkzeug an / aus (P): Klick in ein Wort lässt es genau dort enden, bis zum nächsten Wort ist Pause">⏸ Pause</button>
+			<button id="btnPick" title="Auswählen an / aus: jeder Klick auf eine Zeile wählt sie aus (oder ab). Auch ohne: Shift+Klick = Bereich, Strg+Klick = einzeln, Strg+A = alle">☑ Auswählen</button>
+			<button id="btnCopy" title="Ausgewählte Zeilen kopieren (Strg+C) – mit allen Zeiten">⧉ Kopieren</button>
+			<button id="btnPaste" title="Kopierte Zeilen einfügen (Strg+V): sie beginnen an der Abspielmarke">📋 Einfügen</button>
+			<button id="btnLink" title="Gleiche Sätze verlinken: sie verhalten sich über den ganzen Track gleich">🔗 Verlinken</button>
 			<button id="btnRepair" title="Ausgewählte Zeilen neu tippen (R). Zeilen auswählen: Zeilennummer anklicken, Shift = Bereich, Strg = einzeln dazu">Reparieren</button>
 			<button id="btnSyl" class="on" title="Silben-Vorschläge an / aus: orange Punkte zeigen, wo ein lang gesungenes Wort in Silben getrennt werden könnte (Sprache in den Einstellungen, sonst automatisch)">Sil·ben</button>
 			<span id="hint"></span>
@@ -290,9 +296,12 @@
 				<tr><td>← →</td><td>vorheriges / nächstes Wort markieren</td></tr>
 				<tr><td>Shift + ← →</td><td>markierte Zeit ±10 ms (mit Strg ±100 ms). Wie S und Entf nur beim Bearbeiten</td></tr>
 				<tr><td>S</td><td>markierte Zeit = Abspielposition</td></tr>
-				<tr><td>Entf</td><td>markierte Zeit löschen</td></tr>
+				<tr><td>Entf / ⌫</td><td>gewählte Zeilen oder das markierte Wort löschen (beim Setzen und in einer offenen Zeile: markierte Zeit löschen)</td></tr>
 				<tr><td>F2 / Doppelklick</td><td>Wort bearbeiten. <code>|</code> trennt Silben (<code>Hel|lo</code>), Leerzeichen trennt Wörter, leer = löschen</td></tr>
 				<tr><td>V</td><td>Stimme der ausgewählten Zeilen: v1, v2 … (eLRC) oder M, F, D (Mann, Frau, Duett), bg = Hintergrund. Ohne Tag gilt die Stimme der Zeile darüber. Hintergrund-Zeilen werden beim normalen Tippen übersprungen, setze sie mit Reparieren</td></tr>
+				<tr><td>Auswählen</td><td>Shift+Klick = Bereich, Strg+Klick = einzeln, Strg+A = alle Zeilen, oder <i>☑ Auswählen</i> und Zeilen anklicken (auch ihre Box in der Zeitleiste). <b>Strg+C</b> / <i>⧉ Kopieren</i> kopiert sie mit allen Zeiten, <b>Strg+V</b> / <i>📋 Einfügen</i> setzt sie an der Abspielmarke wieder ein</td></tr>
+				<tr><td>Box aufziehen</td><td>In der Zeitleiste neben den Zeilenboxen drücken und ziehen: alle Wörter in der Box sind gewählt (Shift / Strg = dazu). Eins davon ziehen verschiebt alle, <b>Strg+C</b> kopiert, <b>Entf</b> löscht, <b>Esc</b> wählt ab</td></tr>
+				<tr><td>🔗</td><td>Gleiche Sätze verlinken: 🔗 an der Zeilennummer verlinkt einen Satz mit allen gleichen. Verlinkte Sätze (gleiche Farbe) verhalten sich überall gleich – was du in einem änderst oder verschiebst, passiert in allen. <b>+</b> neben dem 🔗 macht aus dem Satz eine neue Version (eigene Farbe), gleiche Sätze verlinken sich dann mit der nächsten Version davor. Mit Strg+Klick gewählte Zeilen und <i>🔗 Verlinken</i> kommen in die Gruppe der schon verlinkten unter ihnen. <i>⛓ Lösen</i> hebt es auf</td></tr>
 				<tr><td>1 / 2 / 3 / 4</td><td>Tempo 100 / 75 / 50 / 25 %</td></tr>
 				<tr><td>Strg+Z / Strg+Y</td><td>Rückgängig / Wiederholen</td></tr>
 				<tr><td>Strg+S</td><td>Speichern</td></tr>

@@ -165,7 +165,7 @@ header .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 /* second row: transport centred, ↶ ↷ ⚙ ? on the right of the same row */
 header .bar { flex-basis: 100%; display: grid; grid-template-columns: auto auto 1fr; gap: 12px; align-items: center; }
 header .transport { justify-content: center; }
-header .tools { justify-self: end; }
+header .tools { justify-self: end; flex-wrap: nowrap; }
 header .checks { justify-self: start; flex-wrap: nowrap; }
 header .checks button { font-size: 12.5px; padding: 0 10px; }
 header .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
@@ -841,20 +841,6 @@ body.drop::after {
 }
 
 #splash.wait #splashGo { display: inline-block; }
-#splashTut {
-	margin-top: 18px;
-	height: 38px;
-	padding: 0 20px;
-	border: 1px solid rgba(255, 255, 255, 0.25);
-	border-radius: 99px;
-	background: rgba(255, 255, 255, 0.06);
-	color: var(--text-hi);
-	font-weight: 600;
-	font-size: 14px;
-	animation: rise 0.6s 0.45s ease both;
-}
-#splashTut:hover { background: rgba(255, 255, 255, 0.14); }
-#splash.wait #splashTut { margin-top: 12px; }
 .empty .tut-start { font-size: 14px; }
 .tut-go { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 
@@ -1018,3 +1004,16 @@ body.simple #words .line { padding: 10px 8px; }
 body.simple #words .tok .w { font-size: 20px; }
 body.simple #asst { width: min(440px, calc(100vw - 32px)); font-size: 14px; }
 body.simple #asst .tut-head b { font-size: 15px; }
+
+/* chosen lines (☑ Auswählen, Shift / Strg+Klick) and linked lines (🔗, one colour per group) */
+#btnPick.on { background: var(--cursor); color: var(--ink); border-color: transparent; }
+.line.linked .ln { box-shadow: inset 3px 0 0 var(--lc); padding-left: 6px; }
+.ln .lk { height: 18px; padding: 0 5px; font-size: 10.5px; border-radius: 6px; border: 1px solid var(--lc, var(--line-hi)); color: var(--lc, var(--dim));
+	background: color-mix(in srgb, var(--lc, transparent) 14%, transparent); font-family: var(--font); }
+.ln .lk.twin { opacity: 0.55; border-style: dashed; }
+.ln .lk.plus { margin-left: 2px; padding: 0 4px; font-weight: 700; }
+.ln .lk.twin:hover { opacity: 1; }
+body.simple .ln .lk { display: none; }
+
+/* words chosen with the box in the timeline */
+.tok.wpick { outline: 2px dashed var(--cursor); outline-offset: 1px; }

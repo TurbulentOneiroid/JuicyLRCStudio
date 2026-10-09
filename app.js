@@ -22,7 +22,13 @@ let rate = 1;
 let timed = [];                 // placed tokens in file order, rebuilt on every change
 let vinfo = [];                 // LRC.voices(doc): per line {voice, bg, own}
 let ends = new Map();           // 'li:ti' -> when the token stops (LRC.tokEnd), rebuilt on every change
-let picked = new Set(), pickAnchor = null;    // lines chosen for repair
+let picked = new Set(), pickAnchor = null;    // lines chosen (repair, copy, link)
+let delTarget = 'word';         // what Entf / Backspace deletes outside tapping: 'word' (the marked one) or 'lines' (the chosen ones)
+let wpick = new Set();          // words chosen with the box in the timeline ('li:ti'): dragged, copied, deleted together
+let band = null;                // that box while it is drawn {x0, y0, x1, y1}
+let pickMode = false;           // ☑ Auswählen on: a click on a line adds it to the chosen ones (or takes it out)
+let clip = null;                // lines copied with Strg+C / Kopieren: {json, text}
+let linkPat = new Map();        // linked lines: group id -> their shared pattern (words, times from the line's base), see linkSync
 let repair = null;              // {lines, ghost: 'li:ti' -> old {t, end}, done: Set, jump, finish}
 let version = 0;                // bumps on every change, the preview rebuilds on it
 let marks = [];                 // timeline hit boxes of the last frame: start / end marks
@@ -80,7 +86,7 @@ const esc = s => s.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&g
 // ---------------------------------------------------------------- changes, undo, draft
 
 function snapshot() {
-	return JSON.stringify({meta: doc.meta, lines: doc.lines, sel});
+	return JSON.stringify({meta: doc.meta, lines: doc.lines, sel, links: [...linkPat]});
 }
 
 function pushUndo() {
@@ -94,6 +100,8 @@ function restore(s) {
 	doc.meta = o.meta;
 	doc.lines = o.lines;
 	sel = o.sel;
+	linkPat = new Map(o.links || []);
+	wpick = new Set();
 	renderMeta();
 	changed();
 }
@@ -149,6 +157,8 @@ function tidy() {
 function changed(markDirty = true) {
 	if (markDirty) dirty = true;
 	version++;
+	tidy();
+	linkSync();
 	tidy();
 	recalc();
 	issues = LRC.check(doc, maxGap(), endGap());
@@ -210,6 +220,7 @@ function setDoc(d, name, handle) {
 	fileHandle = handle;
 	undoStack = [];
 	redoStack = [];
+	wpick = new Set();
 	const first = LRC.flat(doc).find(e => e.k.t == null) || LRC.flat(doc)[0];
 	sel = first ? {li: first.li, ti: first.ti, end: false} : null;
 	lastPlaced = null;
@@ -219,6 +230,7 @@ function setDoc(d, name, handle) {
 	loop = null;
 	refLines = null;
 	clearPicked();
+	linkPat = new Map();
 	origin = snapshot();
 	renderMeta();
 	changed(false);
@@ -913,9 +925,12 @@ function resetDoc(how) {
 // ---------------------------------------------------------------- repair: re-tap chosen lines only
 
 function pickLine(li, e) {
-	if (e.shiftKey && pickAnchor != null) {
+	delTarget = 'lines';
+	const from = pickAnchor != null ? pickAnchor : sel ? sel.li : null;
+	if (e.shiftKey && from != null) {
 		picked = new Set();
-		for (let i = Math.min(li, pickAnchor); i <= Math.max(li, pickAnchor); i++) picked.add(i);
+		for (let i = Math.min(li, from); i <= Math.max(li, from); i++) picked.add(i);
+		pickAnchor = from;
 	} else if (e.ctrlKey || e.metaKey) {
 		if (picked.has(li)) picked.delete(li); else picked.add(li);
 		pickAnchor = li;
@@ -927,6 +942,7 @@ function pickLine(li, e) {
 }
 
 function renderPicked() {
+	renderWpick();
 	lineEls.forEach((el, i) => {
 		if (!el) return;
 		el.classList.toggle('picked', picked.has(i));
@@ -934,6 +950,9 @@ function renderPicked() {
 	});
 	const b = $('btnRepair');
 	b.classList.toggle('on', !!repair);
+	renderLinkBtn();
+	$('btnPick').classList.toggle('on', pickMode);
+	$('btnPick').textContent = '☑ Auswählen' + (picked.size ? ' (' + picked.size + ')' : '');
 	b.textContent = repair ? 'Reparatur abbrechen (Esc)' : picked.size ? picked.size + ' Zeile' + (picked.size > 1 ? 'n' : '') +
 		' reparieren' : 'Reparieren';
 }
@@ -1048,6 +1067,8 @@ function moveSel(dir) {
 
 function setSel(s, scroll = true) {
 	sel = s;
+	delTarget = 'word';
+	if (wpick.size) { wpick = new Set(); renderWpick(); }
 	followLoop();
 	renderSelection();
 	const t = selTime();
@@ -1197,6 +1218,25 @@ function cutLine(li, c) {
 		LRC.lineText(doc.lines[li + 1], false).replace(/\|/g, '') + '“  (Strg+Z = zurück)');
 }
 
+// Entf / Backspace (not while tapping or in an open line): the chosen lines go, else the marked word
+function delMarked() {
+	if (delTarget === 'words' && wpick.size) { delWords(); return; }
+	const lis = [...picked].filter(li => doc.lines[li]).sort((a, b) => b - a);
+	if (delTarget === 'lines' && lis.length) {
+		pushUndo();
+		lis.forEach(li => doc.lines.splice(li, 1));
+		clearPicked();
+		sel = doc.lines.length ? {li: Math.min(lis[lis.length - 1], doc.lines.length - 1), ti: 0, end: false} : null;
+		changed();
+		hint(lis.length + (lis.length === 1 ? ' Satz' : ' Sätze') + ' gelöscht  (Strg+Z = zurück)');
+		return;
+	}
+	if (!sel || !doc.lines[sel.li] || !doc.lines[sel.li].tokens[sel.ti]) { hint('Erst ein Wort markieren oder Zeilen auswählen.'); return; }
+	const word = doc.lines[sel.li].tokens[sel.ti].text;
+	tokAction('del', sel.li, sel.ti);
+	hint('„' + word.replace(/\|/g, '') + '“ gelöscht  (Strg+Z = zurück)');
+}
+
 function delLine(li) {
 	pushUndo();
 	clearPicked();
@@ -1237,6 +1277,12 @@ function renderWords() {
 	const html = [];
 	doc.lines.forEach((ln, li) => {
 		const t0 = LRC.lineTime(ln);
+		const tw = !ln.brk && !ln.link ? twinOf(li) : -1;
+		const lk = ln.link ? '<button class="lk" data-act="link" style="--lc:' + linkColor(ln.link.id) + '" title="Verlinkt (Gruppe ' + ln.link.id +
+			'): alle Sätze dieser Farbe verhalten sich gleich – Klick: Verlinkung lösen">🔗' + ln.link.id + '</button>' +
+			'<button class="lk plus" data-act="version" style="--lc:' + linkColor(ln.link.id) + '" title="Neue Version dieses Satzes: ' +
+			'er verlässt die Gruppe und bekommt eine eigene Farbe – gleiche Sätze lassen sich dann mit ihr verlinken">+</button>' :
+			tw >= 0 ? '<button class="lk twin" data-act="link" title="Gleicher Satz wie Zeile ' + (tw + 1) + ' – Klick: mit ihm verlinken">🔗</button>' : '';
 		const tools = '<span class="tools">' + (ln.brk ? '' : '<button data-act="edit" title="Zeile bearbeiten">✎</button>') +
 			'<button data-act="add" title="Zeile darunter einfügen">＋</button>' +
 			'<button data-act="del" title="Zeile löschen">✕</button></span>';
@@ -1245,8 +1291,8 @@ function renderWords() {
 		const badge = vi.bg ? '<span class="vb bg" title="Hintergrund (bg:)">bg</span>' : vi.voice
 			? '<span class="vb v' + vg + (vi.own ? '' : ' inh') + '" title="Stimme' + (vi.own ? '' : ' (von oben übernommen)') +
 			'">' + esc(vi.voice) + '</span>' : '';
-		html.push('<div class="line' + (ln.brk ? ' brk' : '') + (vi.bg ? ' bgline' : '') + (vg && !ln.brk ? ' voice' + vg : '') +
-			'" data-li="' + li + '"><div class="ln">' + (li + 1) + ' ' + badge + ' ' + tools + '<br>' +
+		html.push('<div class="line' + (ln.brk ? ' brk' : '') + (vi.bg ? ' bgline' : '') + (vg && !ln.brk ? ' voice' + vg : '') + (ln.link ? ' linked' : '') +
+			'" data-li="' + li + '"' + (ln.link ? ' style="--lc:' + linkColor(ln.link.id) + '"' : '') + '><div class="ln">' + (li + 1) + ' ' + badge + ' ' + lk + ' ' + tools + '<br>' +
 			(t0 != null ? LRC.fmt(t0) : '–') + '</div><div class="toks">');
 		if (ln.brk) {
 			html.push('— Pause / Zeilenende ' + (t0 != null ? LRC.fmt(t0) : '') + ' —');
@@ -1311,6 +1357,7 @@ function selEl(s = sel) {
 }
 
 function renderSelection() {
+	if ($('btnLink')) renderLinkBtn();
 	$('words').querySelectorAll('.sel').forEach(el => el.classList.remove('sel'));
 	const el = selEl();
 	if (el) el.classList.add('sel');
@@ -1601,13 +1648,14 @@ function drawTimeline(now) {
 		if (!r || r.b < t0 || r.a > t0 + sp || tlHidden(li)) return;
 		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li);
 		const x0 = X(r.a), x1 = X(r.b), y = up ? LANE_Y + LIFT_DY : bg ? LANE_Y + 21 : LANE_Y, h = bg ? 6 : 19;
-		const col = up ? C.err : cur ? C.cursor : bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
+		const pk = picked.has(li), lc = ln.link ? linkColor(ln.link.id) : null;
+		const col = up ? C.err : cur || pk ? C.cursor : bad === 'err' ? C.err : bad === 'warn' ? C.warn : lc || (bg ? C.bgv : C.lane);
 		if (up) {                                    // solid, so the word lines and the waveform do not run through it
 			ctx.fillStyle = C.ink;
 			ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
 		}
 		ctx.fillStyle = up ? C.err : col;
-		ctx.globalAlpha = up ? 0.35 : cur ? 0.25 : 0.1;
+		ctx.globalAlpha = up ? 0.35 : cur || pk ? 0.25 : lc ? 0.18 : 0.1;
 		ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
 		ctx.globalAlpha = 1;
 		ctx.strokeStyle = col;
@@ -1616,6 +1664,10 @@ function drawTimeline(now) {
 		ctx.strokeRect(x0 + 0.5, y + 0.5, Math.max(2, x1 - x0 - 2), h - 1);
 		ctx.shadowBlur = 0;
 		ctx.lineWidth = 1;
+		if (lc && !bg) {                                // linked: a bar in the colour of its group
+			ctx.fillStyle = lc;
+			ctx.fillRect(x0 + 1, y + h - 4, Math.max(1, x1 - x0 - 3), 3);
+		}
 		if (!bg) {
 			ctx.save();
 			ctx.beginPath();
@@ -1623,7 +1675,8 @@ function drawTimeline(now) {
 			ctx.clip();
 			ctx.font = (cur || up ? 'bold ' : '') + '11px ' + UI_FONT;
 			ctx.fillStyle = cur ? C.cursor : up ? C.textHi : C.text;
-			ctx.fillText((loop && loop.kind === 'line' && loop.li === li ? '↻ ' : '') + (li + 1) + '  ' + LRC.lineText(ln, false).replace(/\|/g, ''), x0 + 4, y + 13);
+			ctx.fillText((loop && loop.kind === 'line' && loop.li === li ? '↻ ' : '') + (ln.link ? '🔗' + ln.link.id + ' ' : '') + (li + 1) + '  ' +
+				LRC.lineText(ln, false).replace(/\|/g, ''), x0 + 4, y + 13);
 			ctx.restore();
 		}
 		lanes.push({x0, x1, y, h, li, up});
@@ -1778,12 +1831,22 @@ function drawTimeline(now) {
 		else { c.n++; if (o.y0 < c.o.y0) c.o = o; }
 	}
 	ctx.font = 'bold 10px ' + UI_FONT;
+	const placed = [], free = (bx, by, bw, bh) => {      // a spot for a button that covers none placed before (tries below, then above)
+		const hits = yy => placed.some(r => bx < r.x1 + 2 && bx + bw > r.x0 - 2 && yy < r.y1 + 1 && yy + bh > r.y0 - 1);
+		for (const d of [0, 1, 2, 3, -1, -2, 4, 5]) {
+			const yy = by + d * (bh + 2);
+			if (yy >= 1 && yy + bh <= LANE_Y - 2 && !hits(yy)) { placed.push({x0: bx, x1: bx + bw, y0: yy, y1: yy + bh}); return yy; }
+		}
+		placed.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh});
+		return by;
+	};
 	const dups = dupPairs(), dupAt = new Set(dups.map(d => d.li + ':' + d.ti));
 	for (const {o, n} of tops.values()) {
 		if (n === 2 && (dupAt.has(o.li + ':' + o.ti) || dupAt.has(o.li + ':' + (o.ti - 1)))) continue;
 		const label = '⇔ ' + n + ' Wörter auffächern', bw = ctx.measureText(label).width + 12, bh = 15;
 		let bx = o.x0, by = o.y0 - bh - 2;
 		if (by < 1) { bx = o.x1 + 4; by = Math.max(1, o.y0); }    // no room above a squeezed stack: beside it
+		by = free(bx, by, bw, bh);
 		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
 		ctx.fillStyle = C.accent;
 		ctx.globalAlpha = hov ? 1 : 0.88;
@@ -1796,14 +1859,24 @@ function drawTimeline(now) {
 		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
 	}
 	// the same word twice, almost on top of itself: a button over the pair fuses them (the upper one goes)
+	// many of the same word on top of each other: one button for all of them (per word, where they lie close)
 	fuseBtns = [];
+	const fuseGroups = [], fnorm = s => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 	for (const d of dups) {
 		const pair = bodies.filter(o => o.li === d.li && (o.ti === d.ti || o.ti === d.ti + 1));
 		if (!pair.length) continue;
+		const w = fnorm(doc.lines[d.li].tokens[d.ti].text), x0 = Math.min(...pair.map(o => o.x0)), x1 = Math.max(...pair.map(o => o.x1));
 		const top = pair.reduce((x, y) => (y.y0 < x.y0 ? y : x));
-		const label = '⇊ doppelt – fusionieren', bw = ctx.measureText(label).width + 12, bh = 15;
-		let bx = Math.max(2, Math.min(W - bw - 2, Math.min(...pair.map(o => o.x0)))), by = top.y0 - bh - 2;
-		if (by < 1) { bx = Math.min(W - bw - 2, Math.max(...pair.map(o => o.x1)) + 4); by = Math.max(1, top.y0); }
+		const g = fuseGroups.find(g => g.w === w && x0 <= g.x1 + 30 && x1 >= g.x0 - 30);
+		if (g) { g.pairs.push(d); g.x0 = Math.min(g.x0, x0); g.x1 = Math.max(g.x1, x1); if (top.y0 < g.top.y0) g.top = top; }
+		else fuseGroups.push({w, pairs: [d], x0, x1, top, text: doc.lines[d.li].tokens[d.ti].text.replace(/\|/g, '')});
+	}
+	for (const g of fuseGroups) {
+		const n = g.pairs.length, top = g.top;
+		const label = n > 1 ? '⇊ ' + (n + 1) + '× „' + g.text + '“ – fusionieren' : '⇊ doppelt – fusionieren', bw = ctx.measureText(label).width + 12, bh = 15;
+		let bx = Math.max(2, Math.min(W - bw - 2, g.x0)), by = top.y0 - bh - 2;
+		if (by < 1) { bx = Math.min(W - bw - 2, g.x1 + 4); by = Math.max(1, top.y0); }
+		by = free(bx, by, bw, bh);
 		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
 		ctx.fillStyle = C.err;
 		ctx.globalAlpha = hov ? 1 : 0.9;
@@ -1813,7 +1886,7 @@ function drawTimeline(now) {
 		ctx.globalAlpha = 1;
 		ctx.fillStyle = C.ink;
 		ctx.fillText(label, bx + 6, by + 11);
-		fuseBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: d.li, ti: d.ti});
+		fuseBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: g.pairs[0].li, ti: g.pairs[0].ti, pairs: g.pairs});
 	}
 	// a word lifted because it stands in the wrong place of its line: a button over it puts it there in the text
 	wordBtns = [];
@@ -2019,6 +2092,7 @@ function frame() {
 	loopCheck(now);
 	$('btnLoop').classList.toggle('on', !!loop);
 	drawTimeline(now);
+	drawWpick();
 	drawOverview(now);
 }
 
@@ -2043,12 +2117,16 @@ window.addEventListener('keydown', e => {
 	if (typing(e)) return;
 	if (ctrl && low === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
 	if (ctrl && (low === 'y' || (low === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+	if (ctrl && low === 'a') { e.preventDefault(); picked = new Set(doc.lines.map((_, i) => i)); pickAnchor = 0; delTarget = 'lines'; renderPicked(); return; }
 	if (k === ' ') { e.preventDefault(); if (!e.repeat) spaceDown(); return; }
 	if (ctrl && !e.shiftKey) return;
 	let used = true;
-	if (k === 'Backspace') backTap();
+	if ((k === 'Backspace' || k === 'Delete') && !edit && !tapMode() && !repair) delMarked();
+	else if (k === 'Backspace') backTap();
 	else if (low === 'e') { if (edit || tapMode()) endNow(); else canTime(); }
 	else if (low === 'p') setPauser(!pauser);
+	else if (k === 'Escape' && wpick.size) { wpick = new Set(); renderWpick(); hint('Wörter abgewählt.'); }
+	else if (k === 'Escape' && pickMode) setPickMode(false);
 	else if (k === 'Escape' && blade) setBlade(false);
 	else if (k === 'Escape' && pauser) setPauser(false);
 	else if (k === 'Escape') {
@@ -2207,7 +2285,11 @@ $('words').addEventListener('click', e => {
 	if (btn) {
 		const li = +btn.closest('.line').dataset.li;
 		if (edit && !(btn.dataset.act === 'edit' && li === edit.li)) { lockedHint(); return; }
-		({edit: editLine, add: addLine, del: delLine})[btn.dataset.act](li);
+		({edit: editLine, add: addLine, del: delLine, link: linkToggle, version: linkVersion})[btn.dataset.act](li);
+		return;
+	}
+	if ((e.shiftKey || e.ctrlKey || e.metaKey || pickMode) && e.target.closest('.line')) {
+		pickLine(+e.target.closest('.line').dataset.li, e.shiftKey || e.ctrlKey || e.metaKey ? e : {ctrlKey: true});
 		return;
 	}
 	const el = e.target.closest('.tok, .endmark'), row = e.target.closest('.line');
@@ -2272,7 +2354,7 @@ function tlCursor(x, y) {
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {
 		const b = u || lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
-		return b && open(b.li) ? 'grab' : '';
+		return b && open(b.li) ? 'grab' : !edit ? 'crosshair' : '';
 	}
 	if (edit && edit.zone) {
 		const ex = t => (t - view.start) / view.span * tl.clientWidth;
@@ -2372,6 +2454,10 @@ function dragLine(li, x0) {
 		const looping = !!loop;
 		goLine(li);
 		if (looping) setLoop(li);
+		picked = new Set([li]);
+		pickAnchor = li;
+		delTarget = 'lines';
+		renderPicked();
 	};
 	window.addEventListener('mousemove', move);
 	window.addEventListener('mouseup', up);
@@ -2393,17 +2479,23 @@ tl.addEventListener('mousedown', e => {
 	const tb = trimAt(x, y);
 	if (tb) { trimEnd(tb.li, tb.ti, tb.to); return; }
 	const fb2 = fuseAt(x, y);
-	if (fb2) { fuseWords(fb2.li, fb2.ti); return; }
+	if (fb2) { fuseWords(fb2.pairs); return; }
 	const wb = wordAt(x, y);
 	if (wb) { sortWords(wb.li); return; }
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {                  // line box: click = mark that line, drag = move the whole line
-		const b = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
-			lanes.find(l => !l.up && x >= l.x0 && x <= l.x1);
-		if (b && edit && b.li !== edit.li) lockedHint();
+		const on = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
+		if (!on && !edit) { startBand(x, y, e.shiftKey || e.ctrlKey || e.metaKey); return; }    // beside the boxes: choose words
+		const b = on || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1);
+		if (b && !edit && (e.shiftKey || e.ctrlKey || e.metaKey || pickMode)) pickLine(b.li, e.shiftKey || e.ctrlKey || e.metaKey ? e : {ctrlKey: true});
+		else if (b && edit && b.li !== edit.li) lockedHint();
 		else if (b) dragLine(b.li, x);
 		return;
 	}
+	const gb = !edit && wpick.size && !(e.shiftKey || e.ctrlKey || e.metaKey) && bodyAt(x, y);
+	if (gb && wpick.has(gb.li + ':' + gb.ti)) { dragWords(x, gb); return; }
+	const pb = !edit && (e.shiftKey || e.ctrlKey || e.metaKey || pickMode) && bodyAt(x, y);
+	if (pb) { pickLine(pb.li, e.shiftKey || e.ctrlKey || e.metaKey ? e : {ctrlKey: true}); return; }
 	let hit = null, bd = 7;
 	const sb = bodyAt(x, y);
 	if (sb && sb.stack) hit = {li: sb.li, ti: sb.ti, end: false, body: true};
@@ -2597,19 +2689,25 @@ function dupPairs() {
 	return out;
 }
 
-// fuse such a pair into one word: the upper (first) one is deleted, the other keeps its time; a line end on the
-// deleted one goes over
-function fuseWords(li, ti) {
-	const ln = doc.lines[li], a = ln && ln.tokens[ti], b = ln && ln.tokens[ti + 1];
-	if (!a || !b) return;
-	if (edit && edit.li !== li) { lockedHint(); return; }
+// fuse such pairs [{li, ti}] into one word each: the upper (first) one is deleted, the other keeps its time; a line
+// end on the deleted one goes over. A row of the same word (pairs one after the other) becomes one word.
+function fuseWords(pairs) {
+	pairs = pairs.filter(d => doc.lines[d.li] && doc.lines[d.li].tokens[d.ti + 1]).sort((a, b) => b.li - a.li || b.ti - a.ti);
+	if (!pairs.length) return;
+	if (edit && pairs.some(d => d.li !== edit.li)) { lockedHint(); return; }
 	pushUndo();
-	popEl(tokEls[li] && tokEls[li][ti]);
-	if (a.end != null && b.end == null && a.end > b.t) b.end = a.end;
-	ln.tokens.splice(ti, 1);
-	sel = {li, ti, end: false};
+	let word = '';
+	for (const {li, ti} of pairs) {
+		const ln = doc.lines[li], a = ln.tokens[ti], b = ln.tokens[ti + 1];
+		popEl(tokEls[li] && tokEls[li][ti]);
+		if (a.end != null && b.end == null && a.end > b.t) b.end = a.end;
+		ln.tokens.splice(ti, 1);
+		word = b.text;
+	}
+	const last = pairs[pairs.length - 1];
+	sel = {li: last.li, ti: last.ti, end: false};
 	changed();
-	hint('„' + b.text + '“ fusioniert – das doppelte Wort ist weg  (Strg+Z = zurück)');
+	hint('„' + word.replace(/\|/g, '') + '“ fusioniert – ' + (pairs.length > 1 ? pairs.length + ' doppelte Wörter sind' : 'das doppelte Wort ist') + ' weg  (Strg+Z = zurück)');
 }
 
 // the words of a line in the order of their times: a word that stands too early or too late in the text moves to
@@ -2678,7 +2776,9 @@ tl.addEventListener('wheel', e => {
 		return;
 	}
 	const at = view.start + e.offsetX / W * view.span;
-	view.span = Math.max(1, Math.min(180, view.span * (e.deltaY > 0 ? 1.2 : 1 / 1.2)));
+	// Zoom-Tempo in % of one 1.2 step per wheel notch; a touchpad sends many small deltas, they count by their size
+	const z = Math.max(0.01, (+$('zoomSens').value || 15) / 100), d = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * 100 : e.deltaY;
+	view.span = Math.max(1, Math.min(180, view.span * Math.pow(1.2, Math.max(-1, Math.min(1, d / 100)) * z)));
 	view.start = Math.max(0, at - e.offsetX / W * view.span);
 }, {passive: false});
 
@@ -2838,6 +2938,396 @@ $('rawApply').onclick = () => {
 	changed();
 	document.querySelector('.tab[data-tab="words"]').click();
 };
+
+// ---------------------------------------------------------------- choose words with a box in the timeline
+// A press beside the line boxes (under the waveform) draws a box, like in a file manager: every word in it is chosen
+// (Shift / Strg: added to the ones chosen before). A chosen word dragged moves all of them, Strg+C copies them,
+// Entf deletes them, Esc lets them go. A click without dragging just sets the playhead as before.
+
+function wpickList() {
+	return [...wpick].map(s => s.split(':').map(Number)).filter(([li, ti]) => doc.lines[li] && doc.lines[li].tokens[ti]);
+}
+
+// the words in the box: their word box touches it, or it covers their line box where they start
+function bandWords() {
+	const x0 = Math.min(band.x0, band.x1), x1 = Math.max(band.x0, band.x1), y0 = Math.min(band.y0, band.y1), y1 = Math.max(band.y0, band.y1);
+	const out = new Set(), W = tl.clientWidth, X = t => (t - view.start) / view.span * W;
+	for (const o of bodies) if (o.x1 >= x0 && o.x0 <= x1 && o.y1 >= y0 && o.y0 <= y1) out.add(o.li + ':' + o.ti);
+	for (const l of lanes) {
+		if (l.x1 < x0 || l.x0 > x1 || l.y + l.h < y0 || l.y > y1) continue;
+		doc.lines[l.li].tokens.forEach((k, ti) => { if (k.t != null && X(k.t) >= x0 && X(k.t) <= x1) out.add(l.li + ':' + ti); });
+	}
+	return out;
+}
+
+function startBand(x, y, add) {
+	const base = add ? new Set(wpick) : new Set();
+	band = {x0: x, y0: y, x1: x, y1: y};
+	const move = ev => {
+		const r = tl.getBoundingClientRect();
+		band.x1 = ev.clientX - r.left;
+		band.y1 = ev.clientY - r.top;
+		wpick = new Set(base);
+		if (Math.abs(band.x1 - band.x0) > 3 || Math.abs(band.y1 - band.y0) > 3) for (const id of bandWords()) wpick.add(id);
+	};
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		const moved = Math.abs(band.x1 - band.x0) > 3 || Math.abs(band.y1 - band.y0) > 3;
+		band = null;
+		if (!moved) {                                // a click: the playhead goes there, as on any empty spot
+			if (!add) wpick = new Set();
+			seek(tlTime(x));
+			replayT = null;
+		} else if (wpick.size) {
+			delTarget = 'words';
+			hint(wpick.size + (wpick.size === 1 ? ' Wort' : ' Wörter') + ' gewählt: eins davon ziehen = alle verschieben, Strg+C = kopieren, ' +
+				'Entf = löschen, Esc = abwählen');
+		}
+		renderWpick();
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+}
+
+// the chosen words dragged together: each keeps its length and its distance to the others
+function dragWords(x0, at) {
+	const ws = wpickList().map(([li, ti]) => doc.lines[li].tokens[ti]).filter(k => k.t != null)
+		.map(k => ({k, t: k.t, end: k.end}));
+	if (!ws.length) return;
+	const lo = Math.min(...ws.map(w => w.t)), W = tl.clientWidth;
+	drag = {x0, moved: false, undo: false, words: true};
+	tl.style.cursor = 'grabbing';
+	const move = ev => {
+		const xx = ev.clientX - tl.getBoundingClientRect().left;
+		if (Math.abs(xx - x0) > 3) drag.moved = true;
+		if (!drag.moved) return;
+		if (!drag.undo) { pushUndo(); drag.undo = true; }
+		const dt = LRC.q(Math.max(-lo, (xx - x0) / W * view.span));
+		drag.dt = dt;
+		ws.forEach(w => { w.k.t = LRC.q(w.t + dt); if (w.end != null) w.k.end = LRC.q(w.end + dt); });
+		recalc();
+		dragSnip(LRC.q(lo + dt));
+	};
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		tl.style.cursor = '';
+		const moved = drag.moved, dt = drag.dt || 0;
+		drag = null;
+		if (!moved) { setSel({li: at.li, ti: at.ti, end: false}); return; }    // a click: just that word
+		changed();
+		dragSnip(LRC.q(lo + dt), true);
+		hint(ws.length + ' Wörter um ' + (dt > 0 ? '+' : '') + dt.toFixed(2) + ' s verschoben  (Strg+Z = zurück)');
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+}
+
+// the chosen words as lines of their own (one per line they come from), for Strg+C
+function wordsAsLines() {
+	const by = new Map();
+	for (const [li, ti] of wpickList().sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+		if (!by.has(li)) by.set(li, []);
+		by.get(li).push(ti);
+	}
+	return [...by].map(([li, tis]) => {
+		const ln = doc.lines[li];
+		const tokens = tis.map(ti => {
+			const k = Object.assign({}, ln.tokens[ti]), nx = ln.tokens[ti + 1];
+			if (k.end == null && nx && nx.t != null && !tis.includes(ti + 1)) k.end = nx.t;   // it keeps its length
+			return k;
+		});
+		tokens[0].glue = false;
+		return {t: tokens[0].t, tokens, brk: false, vtag: ln.vtag};
+	});
+}
+
+function delWords() {
+	const ws = wpickList().sort((a, b) => b[0] - a[0] || b[1] - a[1]);
+	pushUndo();
+	for (const [li, ti] of ws) {
+		const ln = doc.lines[li], k = ln.tokens[ti];
+		ln.tokens.splice(ti, 1);
+		const nx = ln.tokens[ti];
+		if (nx && nx.glue && !k.glue) nx.glue = false;
+		if (k.end != null && ti === ln.tokens.length && ti > 0 && ln.tokens[ti - 1].end == null) ln.tokens[ti - 1].end = k.end;
+		if (!ln.tokens.length) doc.lines.splice(li, 1);
+	}
+	wpick = new Set();
+	sel = doc.lines.length ? {li: Math.min(ws[ws.length - 1][0], doc.lines.length - 1), ti: 0, end: false} : null;
+	changed();
+	hint(ws.length + (ws.length === 1 ? ' Wort' : ' Wörter') + ' gelöscht  (Strg+Z = zurück)');
+}
+
+// chosen words in the word list
+function renderWpick() {
+	$('words').querySelectorAll('.tok.wpick').forEach(el => el.classList.remove('wpick'));
+	for (const [li, ti] of wpickList()) { const el = tokEls[li] && tokEls[li][ti]; if (el) el.classList.add('wpick'); }
+}
+
+// ... and in the timeline: their boxes framed, and the box while it is drawn
+function drawWpick() {
+	if (!wpick.size && !band) return;
+	const ctx = tl.getContext('2d');
+	ctx.save();
+	ctx.strokeStyle = C.cursor;
+	ctx.fillStyle = C.cursor;
+	ctx.lineWidth = 2;
+	for (const o of bodies) {
+		if (!wpick.has(o.li + ':' + o.ti)) continue;
+		ctx.globalAlpha = 0.3;
+		ctx.fillRect(o.x0, o.y0, o.x1 - o.x0, o.y1 - o.y0);
+		ctx.globalAlpha = 1;
+		ctx.strokeRect(o.x0 + 1, o.y0 + 1, Math.max(2, o.x1 - o.x0 - 2), o.y1 - o.y0 - 2);
+	}
+	if (band) {
+		const x = Math.min(band.x0, band.x1), y = Math.min(band.y0, band.y1), w = Math.abs(band.x1 - band.x0), h = Math.abs(band.y1 - band.y0);
+		ctx.globalAlpha = 0.12;
+		ctx.fillRect(x, y, w, h);
+		ctx.globalAlpha = 0.9;
+		ctx.lineWidth = 1;
+		ctx.setLineDash([4, 3]);
+		ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+	}
+	ctx.restore();
+}
+
+
+// ---------------------------------------------------------------- choose, copy and paste lines
+// Lines are chosen with Shift / Strg+Klick (line number, word or line box), Strg+A or ☑ Auswählen. Strg+C / ⧉ Kopieren
+// copies them with all their times (as LRC text too, for other programs), Strg+V / 📋 Einfügen puts them in again so
+// that they start at the playhead - like a clip in a DAW. Text from elsewhere (LRC or plain lyrics) can be pasted too.
+
+function setPickMode(on) {
+	pickMode = on;
+	if (!on) hint('Auswählen aus.');
+	else hint('Auswählen: Klick auf Zeilen (Text oder Box) wählt sie aus oder ab, Shift = Bereich. Dann ⧉ Kopieren, 🔗 Verlinken oder Reparieren. Esc = aus.');
+	renderPicked();
+}
+
+function chosenLines() {
+	const lis = picked.size ? [...picked].sort((a, b) => a - b) : sel ? [sel.li] : [];
+	return lis.filter(li => doc.lines[li]);
+}
+
+// -> the copied lines as LRC text, null when nothing is chosen
+function copyLines() {
+	const lis = chosenLines();
+	if (!lis.length && !(delTarget === 'words' && wpick.size)) { hint('Erst Zeilen auswählen: Shift / Strg+Klick oder ☑ Auswählen.'); return null; }
+	const lines = delTarget === 'words' && wpick.size ? wordsAsLines() : lis.map(li => doc.lines[li]);
+	const text = LRC.write({meta: [], lines});
+	clip = {json: JSON.stringify(lines), text};
+	hint(lines.length + (lines.length === 1 ? ' Zeile' : ' Zeilen') + ' kopiert. Abspielmarke dorthin setzen, wo sie hin sollen, dann Strg+V (📋 Einfügen).');
+	return text;
+}
+
+// text: from the clipboard (null = what was copied here). Lines with times start at the playhead and go in by time,
+// lines without time go in after the marked line. Copies of linked lines stay linked.
+function pasteLines(text = null) {
+	if (edit) { lockedHint(); return; }
+	const own = clip && (text == null || text.trim() === clip.text.trim());
+	let lines = own ? JSON.parse(clip.json) : text && text.trim() ? LRC.parse(text).lines : [];
+	if (!own) lines.forEach(ln => { delete ln.link; });
+	if (!lines.length) { hint('Nichts zum Einfügen – erst Zeilen kopieren (Strg+C).'); return; }
+	const ts = lines.map(ln => LRC.lineTime(ln)).filter(x => x != null);
+	let at = sel ? sel.li + 1 : doc.lines.length;
+	if (ts.length && audio.src) {
+		const t0 = LRC.q(clock()), d = LRC.q(t0 - Math.min(...ts)), sh = x => x == null ? x : LRC.q(x + d);
+		for (const ln of lines) {
+			ln.t = sh(ln.t);
+			ln.tokens.forEach(k => { k.t = sh(k.t); k.end = sh(k.end); });
+			if (ln.link) ln.link.base = sh(ln.link.base);
+		}
+		at = doc.lines.findIndex(ln => { const x = LRC.lineTime(ln); return x != null && x > t0; });
+		if (at < 0) at = doc.lines.length;
+	}
+	pushUndo();
+	doc.lines.splice(at, 0, ...lines);
+	picked = new Set(lines.map((_, i) => at + i));
+	pickAnchor = at;
+	delTarget = 'lines';
+	sel = {li: at, ti: 0, end: false};
+	changed();
+	showLine(at);
+	hint(lines.length + (lines.length === 1 ? ' Zeile' : ' Zeilen') + ' eingefügt' + (ts.length && audio.src ? ' ab ' + LRC.fmt(clock()) : '') +
+		' (Strg+Z = zurück)');
+}
+
+document.addEventListener('copy', e => {
+	if (typing(e) || String(getSelection()).trim() || !doc.lines.length) return;   // marked text on the page: copy that
+	const text = copyLines();
+	if (text == null) return;
+	e.preventDefault();
+	e.clipboardData.setData('text/plain', text);
+});
+document.addEventListener('paste', e => {
+	if (typing(e)) return;
+	e.preventDefault();
+	pasteLines(e.clipboardData.getData('text/plain'));
+});
+$('btnPick').onclick = () => setPickMode(!pickMode);
+$('btnCopy').onclick = () => {
+	const text = copyLines();
+	if (text != null && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => { /* kept inside the studio */ });
+};
+$('btnPaste').onclick = () => {
+	if (clip || !navigator.clipboard) { pasteLines(); return; }
+	navigator.clipboard.readText().then(s => pasteLines(s), () => hint('Erst Zeilen kopieren (⧉ Kopieren oder Strg+C).'));
+};
+
+// ---------------------------------------------------------------- linked lines: the same sentence behaves the same
+// The studio finds lines with the same text (🔗 in the line number). Linked lines share one pattern: their words and
+// the times of the words relative to the line's base (its first word when it was linked). Whatever changes in one -
+// a word moved, made longer, swapped, set again, the whole line moved - happens in all of them, each at its own place.
+// A group has its own colour; a second version of a sentence (sung differently) is a group of its own.
+
+function linkColor(id) {
+	const c = ['#5ce1e6', '#ffb547', '#b69bff', '#7dff9b', '#ff7ac6', '#ffd166', '#6fa8ff', '#ff8f5c'];
+	return c[(id - 1) % c.length];
+}
+
+function lineKey(ln) { return LRC.lineText(ln, false).replace(/\|/g, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim(); }
+
+// the first other line with the same text (-1 = none)
+function twinOf(li) {
+	const ln = doc.lines[li], key = ln && !ln.brk ? lineKey(ln) : '';
+	return key ? doc.lines.findIndex((x, j) => j !== li && !x.brk && lineKey(x) === key) : -1;
+}
+
+// a line's pattern: words with their times from the line's base (the same in every linked line)
+function linkOf(ln) {
+	const rel = x => x == null ? null : LRC.q(x - ln.link.base);
+	return JSON.stringify(ln.tokens.map(k => [k.text, !!k.glue, rel(k.t), rel(k.end)]));
+}
+
+function linkApply(ln, pat) {
+	const sh = x => x == null ? null : LRC.q(ln.link.base + x);
+	ln.tokens = JSON.parse(pat).map(([text, glue, t, end]) => ({text, glue, t: sh(t), end: sh(end)}));
+}
+
+// on every change: a linked line that differs from its group gives the group its new pattern, the others follow.
+// The open line (✎ / Reparieren) only once it is taken with OK.
+function linkSync() {
+	const groups = new Map();
+	doc.lines.forEach(ln => { if (ln.link) { if (!groups.has(ln.link.id)) groups.set(ln.link.id, []); groups.get(ln.link.id).push(ln); } });
+	for (const id of [...linkPat.keys()]) if (!groups.has(id)) linkPat.delete(id);
+	for (const [id, ls] of groups) {
+		if (ls.length < 2 && ls[0].link.solo) { linkPat.set(id, linkOf(ls[0])); continue; }   // a new version (+), waiting for lines
+		if (ls.length < 2) { delete ls[0].link; linkPat.delete(id); continue; }    // alone: nothing to link any more
+		ls.forEach(ln => { delete ln.link.solo; });
+		const pats = ls.map(linkOf), P = linkPat.get(id);
+		if (P == null) { linkPat.set(id, pats[0]); ls.slice(1).forEach(ln => linkApply(ln, pats[0])); continue; }
+		const i = pats.findIndex(x => x !== P);
+		if (i < 0 || (edit && ls[i] === doc.lines[edit.li])) continue;
+		linkPat.set(id, pats[i]);
+		ls.forEach((ln, j) => { if (j !== i) linkApply(ln, pats[i]); });
+	}
+}
+
+function lineBase(ln) { const k = ln.tokens.find(x => x.t != null); return k ? k.t : LRC.lineTime(ln); }
+
+// where a line takes the pattern P so that it stays where it is: the middle of how far its words are from the
+// pattern (not its first word - a first word set too late would push the whole line to the right)
+function fitBase(ln, P) {
+	const pat = JSON.parse(P), off = [];
+	ln.tokens.forEach((k, i) => {
+		if (!pat[i]) return;
+		if (k.t != null && pat[i][2] != null) off.push(k.t - pat[i][2]);
+		if (k.end != null && pat[i][3] != null) off.push(k.end - pat[i][3]);
+	});
+	if (!off.length) { const r = pat.find(x => x[2] != null); return LRC.q(lineBase(ln) - (r ? r[2] : 0)); }
+	off.sort((a, b) => a - b);
+	const h = off.length >> 1;
+	return LRC.q(off.length % 2 ? off[h] : (off[h - 1] + off[h]) / 2);
+}
+
+// lines lis into one group, the first one is the model; fresh: always a new group (a new version of the sentence)
+function linkLines(lis, fresh) {
+	const ls = lis.map(li => doc.lines[li]).filter(ln => ln && !ln.brk);
+	const timed = ls.filter(ln => lineBase(ln) != null);
+	if (timed.length < 2) { hint('Zum Verlinken brauchen die Sätze schon eine Zeit – erst setzen.'); return; }
+	if (timed.length < ls.length) hint('Sätze ohne Zeit bleiben außen vor – erst setzen, dann verlinken.');
+	pushUndo();
+	const m = timed[0];
+	const id = !fresh && m.link ? m.link.id : 1 + Math.max(0, ...doc.lines.map(ln => ln.link ? ln.link.id : 0), ...linkPat.keys());
+	if (!m.link || m.link.id !== id) m.link = {id, base: lineBase(m)};
+	const P = linkOf(m);
+	linkPat.set(id, P);
+	for (const ln of timed.slice(1)) {
+		ln.link = {id, base: fitBase(ln, P)};
+		linkApply(ln, P);
+	}
+	changed();
+	const n = doc.lines.filter(ln => ln.link && ln.link.id === id).length;
+	hint(n + ' Sätze verlinkt (🔗' + id + '): was du in einem änderst, passiert in allen  (Strg+Z = zurück)');
+}
+
+function unlinkLines(lis) {
+	const ls = lis.map(li => doc.lines[li]).filter(ln => ln && ln.link);
+	if (!ls.length) return;
+	pushUndo();
+	ls.forEach(ln => { delete ln.link; });
+	changed();
+	hint(ls.length + (ls.length === 1 ? ' Satz' : ' Sätze') + ' gelöst – sie lassen sich jetzt einzeln ändern.');
+}
+
+// 🔗 at a line: linked -> unlink it; else: no group of this sentence yet -> link it with every unlinked line of the same
+// text; groups already there -> it joins the nearest one before it (else after it)
+function linkToggle(li) {
+	const ln = doc.lines[li];
+	if (!ln || ln.brk) return;
+	if (edit) { lockedHint(); return; }
+	if (ln.link) { unlinkLines([li]); return; }
+	const key = lineKey(ln), same = [], linked = [];
+	doc.lines.forEach((x, j) => {
+		if (x.brk || lineKey(x) !== key) return;
+		if (x.link) linked.push(j); else same.push(j);
+	});
+	if (linked.length) {
+		const before = linked.filter(j => j < li), m = before.length ? before[before.length - 1] : linked[0];
+		linkLines([m, li], false);
+		return;
+	}
+	if (same.length < 2) { hint('Kein gleicher Satz gefunden. Andere Versionen: Zeilen mit Strg+Klick auswählen und 🔗 Verlinken.'); return; }
+	linkLines(same, false);
+}
+
+// + at a linked line: it leaves its group and starts a new version of the sentence (own colour); identical lines
+// then join it with their 🔗 (the nearest version before them) or chosen together with Strg+Klick and 🔗 Verlinken
+function linkVersion(li) {
+	const ln = doc.lines[li];
+	if (!ln || ln.brk) return;
+	if (edit) { lockedHint(); return; }
+	if (lineBase(ln) == null) { hint('Erst den Satz setzen, dann eine Version daraus machen.'); return; }
+	pushUndo();
+	const id = 1 + Math.max(0, ...doc.lines.map(x => x.link ? x.link.id : 0), ...linkPat.keys());
+	ln.link = {id, base: lineBase(ln), solo: true};
+	linkPat.set(id, linkOf(ln));
+	changed();
+	hint('Neue Version 🔗' + id + ': gleiche Sätze danach verlinken sich mit ihr (🔗 an der Zeile), oder mit Strg+Klick auswählen und 🔗 Verlinken.');
+}
+
+// the 🔗 button over the words: several chosen lines -> a group of their own (a new version); one line -> as at the line
+function renderLinkBtn() {
+	const b = $('btnLink'), lis = chosenLines(), ln = lis.length === 1 && doc.lines[lis[0]];
+	b.textContent = lis.length > 1 ? '🔗 ' + lis.length + ' verlinken' : ln && ln.link ? '⛓ Lösen' : '🔗 Verlinken';
+	b.title = lis.length > 1 ? 'Die ausgewählten Sätze verlinken: ist einer schon verlinkt, kommen die anderen in seine Gruppe, sonst eine neue Gruppe (neue Farbe)' :
+		ln && ln.link ? 'Verlinkung dieses Satzes lösen: danach lässt er sich einzeln ändern' :
+		'Gleiche Sätze verlinken: was du in einem änderst (Wörter, Zeiten, Verschieben), passiert in allen. Mehrere Zeilen ausgewählt = eigene Gruppe (neue Version)';
+}
+$('btnLink').onclick = () => {
+	if (edit) { lockedHint(); return; }
+	const lis = chosenLines();
+	const lead = lis.find(li => doc.lines[li] && doc.lines[li].link);
+	if (lis.length > 1) linkLines(lead != null ? [lead, ...lis.filter(li => li !== lead)] : lis, lead == null);
+	else if (lis.length) linkToggle(lis[0]);
+	else hint('Erst einen Satz markieren oder mehrere auswählen.');
+};
+
+// Zoom-Tempo is kept in this browser
+$('zoomSens').onchange = () => { try { localStorage.setItem('lrcEditorZoom2', $('zoomSens').value); } catch (e) { /* ignore */ } };
+try { const z = localStorage.getItem('lrcEditorZoom2'); if (z) $('zoomSens').value = z; } catch (e) { /* ignore */ }
 
 // ---------------------------------------------------------------- folder: which audio belongs to which LRC
 //
@@ -3927,7 +4417,6 @@ $('tutBody').addEventListener('click', e => {
 	endTut();
 	$(b.dataset.go).click();
 });
-$('splashTut').addEventListener('click', () => startTut());
 $('words').addEventListener('click', e => { if (e.target.closest('.tut-start')) startTut(); });
 // the cards (tutorial, assistant) are moved by their head
 document.querySelectorAll('.tut-head').forEach(head => head.addEventListener('pointerdown', e => {
@@ -4167,7 +4656,7 @@ function asstTaskStep(t) {
 			'und ist aus Versehen doppelt drin. <b>⇊ Fusionieren</b> macht eins daraus: Das obere wird gelöscht, das untere bleibt mit seiner Zeit. ' +
 			'Wird es wirklich zweimal gesungen, klick <b>Beide behalten</b>.',
 		acts: [['fuse', '⇊ Fusionieren', 1], ['skip', 'Beide behalten'], hear],
-		point: () => tutCv(fuseBtns.find(o => o.li === li && o.ti === t.ti)) || aBtn('fuse')};
+		point: () => tutCv(fuseBtns.find(o => o.pairs.some(d => d.li === li && d.ti === t.ti))) || aBtn('fuse')};
 	if (t.kind === 'trim') {
 		const nli = t.line ? doc.lines.findIndex((x, j) => j > li && !x.brk && !LRC.isBg(x)) : -1;
 		return {...base, key: id + ':' + t.ti + ':' + t.to, ti: t.ti, codes: ['trim'], to: t.to, title: 'Das Ende steht über',
@@ -4430,7 +4919,7 @@ $('asstActs').addEventListener('click', e => {
 	else if (a === 'later') { asst.later.add(doc.lines[s.li]); asst.key = ''; }
 	else if (a === 'sort') sortLines();
 	else if (a === 'resort') sortWords(s.li);
-	else if (a === 'fuse') fuseWords(s.li, s.ti);
+	else if (a === 'fuse') fuseWords([{li: s.li, ti: s.ti}]);
 	else if (a === 'trim') trimEnd(s.li, s.ti, s.to);
 	else if (a === 'retap') { if (s.range) asstRetapRange(s.li, s.range.a, s.range.b); else asstRetap(s.li); }
 	else if (a === 'retapcur') { asst.listening = false; pause(); asstRetap(sel ? sel.li : playLi); }
