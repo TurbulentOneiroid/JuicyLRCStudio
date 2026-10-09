@@ -32,6 +32,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
   ganz klein zeigt die Liedtext-Anzeige nur noch die aktuelle Zeile. Die Song-Felder lassen sich mit ▾ einklappen
 - Prüf-Werkzeuge (Zeiten verteilen, Enden schätzen, Mit Original-Lyrics vergleichen) oben links neben ▶
 - **🎓 Tutorial**: lädt einen kleinen Beispielsong und führt Schritt für Schritt durch alle Werkzeuge (Silben, Auffächern, Ziehen, Zeilenende, Reihenfolge, Original-Abgleich, Setzen, Pause, Klinge, Wörter einfügen); auch Audio und LRC wählen, Fehler in der Wortliste und den Loop; ein blinkender roter Pfeil zeigt, was zu bedienen ist, und jede Aufgabe hakt sich selbst ab. Startbar auch auf der Startseite; am Ende geht es direkt zum eigenen Ordner, Audio oder LRC
+- **✨ Simple-Modus mit Assistent** (Startseite oder oben neben Zurücksetzen): ein schlankes Studio für alle, die selten mit solchen Programmen arbeiten. Juicy führt live durch den Song und ein roter Pfeil zeigt, was als Nächstes dran ist: Audio-Ordner oder Audio und LRC wählen, Original-Lyrics einfügen, eine kurze erste Runde (Karte verschieben, Tempo-Tipp: kurz normal hören, dann 50 %, Wort einfügen und löschen, Wort per Doppelklick umschreiben, ↶ Zurück / ↷ Vor), dann jede Stelle von vorne nach hinten – falsche, fehlende und überzählige Wörter (ein eingefügtes Wort wird gleich auf seine Stelle geprüft), Wörter an der falschen Stelle im Satz, übereinanderliegende Wörter und Zeilen ohne Zeiten (nur die betroffenen Wörter neu einklicken, schwierige Stellen lassen sich auf später legen: Rechtsklick hört an, bei Touch lange drücken, Linksklick bzw. Tippen setzt, Hilfe zum langsameren Tempo bei den ersten Wörtern), fehlende Zeilenenden, Reihenfolge, zum Schluss einmal das ganze Lied anhören, speichern und 🎉 Fertig. Sichtbar ist immer nur die Zeile, um die es gerade geht (in der Wortliste und der Zeitleiste), dazu ein einfacher Zähler; die Zeitleiste blättert seitenweise weiter statt mitzulaufen (*Folgen* aus). 🛠 Profi-Modus = das volle Studio; dort schaltet der Juicy-Kopf den Assistenten dazu
 - **?** öffnet Rundgang und Hilfe: die Seitenleiste klappt dafür rechts über die volle Höhe nach oben, nochmal **?** = zurück
 - **📁 Ordner** (Button oder Ordner ins Fenster ziehen): zeigt, welches Audio zu welcher LRC gehört, und legt fehlende LRCs direkt im Ordner an;
   mit ◀ ▶ oder der Liste durch die Songs blättern (rundherum), vorher fragt es nach Speichern / Verwerfen
@@ -41,6 +42,10 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - Gelöschte Wörter, Zeilen und Zeiten zerplatzen mit einem Blub in aufsteigende Seifenblasen (unter ⚙ abschaltbar)
 - **✂ Klinge (X):** wie im Schnittprogramm in die Zeitleiste klicken, die Zeile wird dort in zwei geteilt (links endet sie
   am Schnitt, rechts beginnt sie mit dem nächsten Wort)
+- **⇄ hier in den Satz einsortieren:** steht ein Wort im Satz an der falschen Stelle, liegt es in der Zeitleiste rot eine Ebene höher – stimmt seine Zeit, rückt der Knopf darüber es im Text dorthin, wo es gesungen wird
+- **⇊ doppelt – fusionieren:** steht dasselbe Wort zweimal fast genau übereinander (höchstens 0,1 s auseinander), schlägt ein Knopf darüber vor, beide zu einem Wort zu machen – das obere wird gelöscht
+- **✂ Ende kürzen:** reicht ein Satzende unter den Anfang des nächsten Satzes (oder ein Wortende unter das nächste Wort), zeigt die Zeitleiste dort eine orange Linie mit Knopf – ein Klick kürzt das Ende genau bis dahin
+- **Folgen aus:** die Zeitleiste blättert eine Seite weiter, sobald die Wiedergabe rechts hinausläuft, und springt beim Loop zurück
 - **Wortliste:** × am Wort löscht es, + daneben fügt ein Wort danach ein, ✓ an einem fehlenden Zeilenende setzt es fest, ↔ über einem Wort tauscht es gegen das Original (und ↶ wieder zurück)
 - **Silben vorschlagen** (Knopf Sil·ben, an / aus; Deutsch / Englisch / automatisch): lang gesungene Wörter ohne Silben zeigen orange Punkte (Lie·be), ✂ am Wort trennt sie, ein Klick auf einen Punkt nur dort (Lie|be) und teilt die Zeit auf
 - **⏸ Pause (P):** genauso in ein Wort klicken, es endet dort, bis zum nächsten Wort ist Pause (grüne Pause-Marke)
@@ -50,7 +55,7 @@ Läuft komplett lokal im Browser, ohne Server, ohne Upload: Audio und Text verla
 - **🎉 Fertig:** fragt einmal nach deinem Namen, trägt ihn als `[by:]` und `[status:Fertig]` in die LRC ein, speichert –
   und feiert mit Konfetti, Blasen und Musik
 
-Zum Kennenlernen am besten **🎓** (oben rechts) – das Tutorial mit Beispielsong. Unter **?** gibt es einen Rundgang durch die Bereiche (Maus auf einen Eintrag = der Bereich leuchtet auf) und alle Tasten.
+Wer nur schnell einen Song sauber machen will, nimmt den **✨ Simple-Modus** – Juicy sagt, was zu tun ist. Zum Kennenlernen aller Werkzeuge am besten **🎓** (oben rechts) – das Tutorial mit Beispielsong. Unter **?** gibt es einen Rundgang durch die Bereiche (Maus auf einen Eintrag = der Bereich leuchtet auf) und alle Tasten.
 
 ## Dateien
 | Datei | Inhalt |

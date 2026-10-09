@@ -29,6 +29,9 @@ let marks = [];                 // timeline hit boxes of the last frame: start /
 let bodies = [];                // ... and word boxes {x0, x1, y0, y1, li, ti}
 let fanBtns = [];               // ... and the "fan out" buttons over stacks {x0, x1, y0, y1, li, ti}
 let orderBtns = [];             // ... and the "sort by time" signs under lines in the wrong place {x0, x1, y0, y1}
+let wordBtns = [];              // ... and the "put it here" buttons over words out of place in their line {x0, x1, y0, y1, li}
+let trimBtns = [];              // ... and the "cut the end back" buttons where an end reaches under the next word {x0, x1, y0, y1, li, ti, to}
+let fuseBtns = [];              // ... and the "fuse" buttons over the same word twice almost on top of itself {x0, x1, y0, y1, li, ti}
 let drag = null;
 let origin = null;              // snapshot as loaded / created: Zurücksetzen goes back to it
 let edit = null;                // {li, before, free}: the one line being edited (B ... OK / Abbrechen), see startEdit
@@ -49,6 +52,11 @@ let newTarget = null;           // {dir, name}: a new LRC made from the folder l
 let refRaw = '', refLines = null;  // original lyrics as pasted / cleaned lines (null = no comparison), see runRef
 let refDiffs = [], refAt = new Map(), refSkip = new Set();
 let tut = null;                 // tutorial running: {i, s, done} (step, its state), see startTut
+let simple = false;             // ✨ simple mode: slim studio, the assistant leads, see setSimple
+// assistant: on, current step and its key, when it started / the user last did something, song state, see asstStep
+const asst = {on: false, step: null, key: '', at: 0, act: 0, noRef: false, listened: false, listening: false, skip: new WeakMap(),
+	later: new WeakSet(), check: null, demo: null, intro: 0, focus: null, left: 0, placed: 0, fix: 0};
+let touchHeldAt = 0;            // a long press on a touch screen just played: the tap that follows sets nothing
 let sylAt = new Map();          // 'li:ti' -> syllables suggested for a word sung as one piece (option Silben vorschlagen)
 
 const tapComp = () => (+$('tapComp').value || 0) / 1000;
@@ -217,6 +225,7 @@ function setDoc(d, name, handle) {
 	dirty = false;
 	renderInfo();
 	if (timed.length) view.start = Math.max(0, timed[0].k.t - 1);
+	asstReset();
 }
 
 async function loadLrcFile(file, handle = null) {
@@ -511,7 +520,7 @@ function setLoop(li) {
 // loop there (and jumps there if it is playing); with nothing to follow, the line under the playhead loops. Off = the
 // whole track plays through. Not while a line is open (its loop box rules) or while tapping.
 let loopMode = true;
-const loopOn = () => loopMode && !edit && !tapMode();
+const loopOn = () => loopMode && !edit && !tapMode() && !asst.listening;
 
 function followLoop(go = !audio.paused) {
 	if (!loopOn() || !sel || !audio.src || (loop && loop.kind !== 'line') || (loop && loop.li === sel.li)) return;
@@ -862,7 +871,9 @@ function placeAt(t) {
 	}
 	lastPlaced = {li: sel.li, ti: sel.ti};
 	replayT = t;
-	const li = sel.li, lineDone = sel.end && sel.ti === ln.tokens.length - 1;
+	if (asst.on && asst.placed < 9) try { localStorage.setItem('lrcEditorAsstPlaced', ++asst.placed); } catch (e) { /* ignore */ }
+	const li = sel.li, lineDone = (sel.end && sel.ti === ln.tokens.length - 1) ||
+		(edit.upto != null && !sel.end && sel.ti >= edit.upto && sel.ti < ln.tokens.length - 1);      // only some words: after the last of them
 	// next: the line end after the last word, the word after a pause mark, else the next word - never another line
 	if (lineDone) edit.free = true;
 	else sel = sel.end ? {li, ti: sel.ti + 1, end: false} : sel.ti === ln.tokens.length - 1 ? {li, ti: sel.ti, end: true} :
@@ -1285,6 +1296,7 @@ function renderWords() {
 	renderSelection();
 	renderPicked();
 	renderMode();
+	asstLines();
 }
 
 function ghostText(li, ti) {
@@ -1536,7 +1548,8 @@ function tag(ctx, s, x, y, col, bold = false) {
 
 function drawTimeline(now) {
 	const [ctx, W, H] = fitCanvas($('timeline'), LANE_Y + 42);
-	if (!audio.paused && $('follow').checked && !drag && (!snip || snip.hold) && !loop) view.start = Math.max(0, now - view.span * 0.25);
+	if (!audio.paused && !drag && $('follow').checked) { if ((!snip || snip.hold) && !loop) view.start = Math.max(0, now - view.span * 0.25); }
+	else if (!audio.paused && !drag && (now > view.start + view.span || now < view.start)) view.start = Math.max(0, now - view.span * 0.05);   // Folgen off: page on
 	const t0 = view.start, sp = view.span;
 	const X = t => (t - t0) / sp * W;
 	ctx.clearRect(0, 0, W, H);
@@ -1585,7 +1598,7 @@ function drawTimeline(now) {
 	lanes = [];
 	const drawLane = (ln, li, up) => {
 		const r = lineRange(li);
-		if (!r || r.b < t0 || r.a > t0 + sp) return;
+		if (!r || r.b < t0 || r.a > t0 + sp || tlHidden(li)) return;
 		const bg = LRC.isBg(ln), cur = sel && sel.li === li, bad = lineBad.get(li);
 		const x0 = X(r.a), x1 = X(r.b), y = up ? LANE_Y + LIFT_DY : bg ? LANE_Y + 21 : LANE_Y, h = bg ? 6 : 19;
 		const col = up ? C.err : cur ? C.cursor : bad === 'err' ? C.err : bad === 'warn' ? C.warn : bg ? C.bgv : C.lane;
@@ -1643,8 +1656,8 @@ function drawTimeline(now) {
 	ctx.strokeStyle = C.mark;
 	ctx.lineWidth = 1.5;
 	ctx.setLineDash([5, 4]);
-	doc.lines.forEach(ln => {
-		if (ln.t != null && (!ln.tokens.length || ln.tokens[0].t == null) && ln.t >= t0 && ln.t <= t0 + sp) {
+	doc.lines.forEach((ln, li) => {
+		if (!tlHidden(li) && ln.t != null && (!ln.tokens.length || ln.tokens[0].t == null) && ln.t >= t0 && ln.t <= t0 + sp) {
 			ctx.beginPath();
 			ctx.moveTo(X(ln.t) + 0.5, 0);
 			ctx.lineTo(X(ln.t) + 0.5, H);
@@ -1658,7 +1671,7 @@ function drawTimeline(now) {
 	marks = [];
 	const vis = timed.filter(e => {
 		const end = endOf(e.li, e.ti);
-		return (end != null ? end : e.k.t) >= t0 - 1 && e.k.t <= t0 + sp + 1;
+		return (end != null ? end : e.k.t) >= t0 - 1 && e.k.t <= t0 + sp + 1 && !tlHidden(e.li);
 	});
 	const lane = e => LRC.isBg(doc.lines[e.li]) ? 1 : 0;
 	// words starting at the same time (red, no length) stack above the one that really runs, so each can be grabbed
@@ -1758,14 +1771,16 @@ function drawTimeline(now) {
 	fanBtns = [];
 	const tops = new Map();
 	for (const o of bodies) {
-		if (!o.stack || o.out) continue;
+		if (!o.stack || o.out || simple) continue;      // simple mode: a stack is clicked in again instead
 		const key = (LRC.isBg(doc.lines[o.li]) ? 'b' : 'm') + doc.lines[o.li].tokens[o.ti].t;
 		const c = tops.get(key);
 		if (!c) tops.set(key, {o, n: 2});
 		else { c.n++; if (o.y0 < c.o.y0) c.o = o; }
 	}
 	ctx.font = 'bold 10px ' + UI_FONT;
+	const dups = dupPairs(), dupAt = new Set(dups.map(d => d.li + ':' + d.ti));
 	for (const {o, n} of tops.values()) {
+		if (n === 2 && (dupAt.has(o.li + ':' + o.ti) || dupAt.has(o.li + ':' + (o.ti - 1)))) continue;
 		const label = '⇔ ' + n + ' Wörter auffächern', bw = ctx.measureText(label).width + 12, bh = 15;
 		let bx = o.x0, by = o.y0 - bh - 2;
 		if (by < 1) { bx = o.x1 + 4; by = Math.max(1, o.y0); }    // no room above a squeezed stack: beside it
@@ -1779,6 +1794,63 @@ function drawTimeline(now) {
 		ctx.fillStyle = C.ink;
 		ctx.fillText(label, bx + 6, by + 11);
 		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
+	}
+	// an end that reaches under the next word or the start of the next line: a button there cuts it back to that start
+	trimBtns = [];
+	for (const o of overhangs()) {
+		if (tlHidden(o.li) || o.to < t0 || o.to > t0 + sp) continue;
+		const label = '✂ Ende bis ' + (o.line ? 'zum nächsten Satz' : '„' + o.word + '“') + ' kürzen', bw = ctx.measureText(label).width + 12, bh = 15;
+		const bx = Math.max(2, Math.min(W - bw - 2, X(o.to) + 3)), by = 58;
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.warn;
+		ctx.fillRect(X(o.to) - 1, by - 4, 2, LANE_Y - by);          // where the end would go
+		ctx.globalAlpha = hov ? 1 : 0.9;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		trimBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti, to: o.to});
+	}
+	// the same word twice, almost on top of itself: a button over the pair fuses them (the upper one goes)
+	fuseBtns = [];
+	for (const d of dups) {
+		const pair = bodies.filter(o => o.li === d.li && (o.ti === d.ti || o.ti === d.ti + 1));
+		if (!pair.length) continue;
+		const top = pair.reduce((x, y) => (y.y0 < x.y0 ? y : x));
+		const label = '⇊ doppelt – fusionieren', bw = ctx.measureText(label).width + 12, bh = 15;
+		let bx = Math.max(2, Math.min(W - bw - 2, Math.min(...pair.map(o => o.x0)))), by = top.y0 - bh - 2;
+		if (by < 1) { bx = Math.min(W - bw - 2, Math.max(...pair.map(o => o.x1)) + 4); by = Math.max(1, top.y0); }
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.err;
+		ctx.globalAlpha = hov ? 1 : 0.9;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		fuseBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: d.li, ti: d.ti});
+	}
+	// a word lifted because it stands in the wrong place of its line: a button over it puts it there in the text
+	wordBtns = [];
+	const seen = new Set();
+	for (const o of bodies) {
+		if (!o.out || seen.has(o.li) || !sortWords(o.li, true)) continue;
+		seen.add(o.li);
+		const label = '⇄ hier in den Satz einsortieren', bw = ctx.measureText(label).width + 12, bh = 15;
+		const bx = Math.max(2, Math.min(W - bw - 2, o.x0)), by = Math.max(1, o.y0 - bh - 3);
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.err;
+		ctx.globalAlpha = hov ? 1 : 0.9;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		wordBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li});
 	}
 	// lifted line boxes last, on top of the words
 	for (const li of lifted) drawLane(doc.lines[li], li, true);
@@ -1802,7 +1874,7 @@ function drawTimeline(now) {
 		ctx.globalAlpha = 1;
 		ctx.fillStyle = C.ink;
 		ctx.fillText(label, bx + 6, by + 11);
-		orderBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh});
+		orderBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li});
 	}
 
 	const hb = hoverX != null && hoverY != null && !fanAt(hoverX, hoverY) && bodyAt(hoverX, hoverY);
@@ -2194,7 +2266,7 @@ tl.addEventListener('mousemove', e => {
 // what a press would do here: edges resize (ew-resize), word and line boxes move (grab), else the CSS default
 function tlCursor(x, y) {
 	const open = li => !edit || edit.li === li;
-	if (fanAt(x, y) || orderAt(x, y)) return 'pointer';
+	if (fanAt(x, y) || orderAt(x, y) || wordAt(x, y) || fuseAt(x, y) || trimAt(x, y)) return 'pointer';
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {
 		const b = u || lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
@@ -2305,6 +2377,7 @@ function dragLine(li, x0) {
 tl.addEventListener('mouseleave', () => { hoverX = null; hoverY = null; });
 tl.addEventListener('mousedown', e => {
 	const x = e.offsetX, y = e.offsetY;
+	if (performance.now() - touchHeldAt < 700) return;
 	if (e.button === 2) {                        // right button: plays while held, a click plays snipLen
 		audition(tlTime(x), true);
 		return;
@@ -2315,6 +2388,12 @@ tl.addEventListener('mousedown', e => {
 	const fb = fanAt(x, y);
 	if (fb) { fanClick(fb); return; }
 	if (orderAt(x, y)) { sortLines(); return; }
+	const tb = trimAt(x, y);
+	if (tb) { trimEnd(tb.li, tb.ti, tb.to); return; }
+	const fb2 = fuseAt(x, y);
+	if (fb2) { fuseWords(fb2.li, fb2.ti); return; }
+	const wb = wordAt(x, y);
+	if (wb) { sortWords(wb.li); return; }
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {                  // line box: click = mark that line, drag = move the whole line
 		const b = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1) ||
@@ -2467,6 +2546,101 @@ function fanOut(li, ti) {
 }
 
 const orderAt = (x, y) => orderBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
+const wordAt = (x, y) => wordBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
+const fuseAt = (x, y) => fuseBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
+const trimAt = (x, y) => trimBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
+
+// ends that reach too far: under the next word of the line (pause mark / end), or the line end under the start of the
+// next line -> [{li, ti, to, line, word}], to = where the end should be (that start). Only when the word itself starts
+// before it, else there is nothing to cut.
+function overhangs() {
+	const out = [];
+	doc.lines.forEach((ln, li) => {
+		if (ln.brk) return;
+		ln.tokens.forEach((k, ti) => {
+			const nx = ln.tokens[ti + 1];
+			if (k.end != null && k.t != null && nx && nx.t != null && k.end > nx.t + 0.01 && nx.t > k.t + 0.05)
+				out.push({li, ti, to: nx.t, line: false, word: nx.text.replace(/\|/g, '')});
+		});
+		const last = ln.tokens.length - 1, k = ln.tokens[last];
+		if (!k || k.end == null || k.t == null || LRC.isBg(ln)) return;
+		let j = li + 1;
+		while (doc.lines[j] && (doc.lines[j].brk || LRC.isBg(doc.lines[j]))) j++;
+		const s = doc.lines[j] ? LRC.lineTime(doc.lines[j]) : null;
+		if (s != null && k.end > s + 0.01 && s > k.t + 0.05) out.push({li, ti: last, to: s, line: true, word: ''});
+	});
+	return out;
+}
+
+function trimEnd(li, ti, to) {
+	const k = doc.lines[li] && doc.lines[li].tokens[ti];
+	if (!k || k.end == null) return;
+	if (edit && edit.li !== li) { lockedHint(); return; }
+	pushUndo();
+	k.end = LRC.q(to);
+	changed();
+	hint('Ende von „' + k.text + '“ auf ' + LRC.fmt(k.end) + ' gekürzt  (Strg+Z = zurück)');
+}
+
+// the same word twice in a row, almost at the same time (DUP_GAP): most likely put in twice by mistake -> [{li, ti}],
+// ti = the first (upper) of the two. Syllables are left alone (la|la).
+const DUP_GAP = 0.1;
+function dupPairs() {
+	const out = [], norm = s => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+	doc.lines.forEach((ln, li) => ln.tokens.forEach((k, ti) => {
+		const n = ln.tokens[ti + 1];
+		if (!n || k.glue || n.glue || (ln.tokens[ti + 2] && ln.tokens[ti + 2].glue) || k.t == null || n.t == null) return;
+		if (norm(k.text) && norm(k.text) === norm(n.text) && Math.abs(n.t - k.t) <= DUP_GAP) out.push({li, ti});
+	}));
+	return out;
+}
+
+// fuse such a pair into one word: the upper (first) one is deleted, the other keeps its time; a line end on the
+// deleted one goes over
+function fuseWords(li, ti) {
+	const ln = doc.lines[li], a = ln && ln.tokens[ti], b = ln && ln.tokens[ti + 1];
+	if (!a || !b) return;
+	if (edit && edit.li !== li) { lockedHint(); return; }
+	pushUndo();
+	popEl(tokEls[li] && tokEls[li][ti]);
+	if (a.end != null && b.end == null && a.end > b.t) b.end = a.end;
+	ln.tokens.splice(ti, 1);
+	sel = {li, ti, end: false};
+	changed();
+	hint('„' + b.text + '“ fusioniert – das doppelte Wort ist weg  (Strg+Z = zurück)');
+}
+
+// the words of a line in the order of their times: a word that stands too early or too late in the text moves to
+// where it is sung (with its syllables; a word without time stays behind the one before it). The line end stays at
+// the end of the line. dry: only tell whether anything would move.
+function sortWords(li, dry = false) {
+	const ln = doc.lines[li];
+	if (!ln || ln.tokens.length < 2) return false;
+	const groups = [];
+	ln.tokens.forEach(k => { if (k.glue && groups.length) groups[groups.length - 1].push(k); else groups.push([k]); });
+	let key = -Infinity;
+	const order = groups.map((g, i) => {
+		const k = g.find(x => x.t != null);
+		if (k) key = k.t;
+		return {g, i, key};
+	}).sort((x, y) => x.key - y.key || x.i - y.i);
+	if (order.every((o, n) => o.i === n)) return false;
+	if (dry) return true;
+	if (edit && edit.li !== li) { lockedHint(); return false; }
+	pushUndo();
+	const last = ln.tokens[ln.tokens.length - 1];
+	ln.tokens = order.flatMap(o => o.g);
+	const nl = ln.tokens[ln.tokens.length - 1], nx = ln.tokens[ln.tokens.indexOf(last) + 1];
+	if (nl !== last && last.end != null && nx && nx.t != null && last.end > nx.t) {     // the old line end goes to the new last word
+		if (nl.end == null) nl.end = last.end;
+		last.end = null;
+	}
+	const w = order.find((o, n) => o.i !== n);
+	sel = {li, ti: ln.tokens.indexOf(w.g[0]), end: false};
+	changed();
+	hint('„' + w.g.map(k => k.text).join('') + '“ steht jetzt im Satz da, wo es gesungen wird  (Strg+Z = zurück)');
+	return true;
+}
 const fanAt = (x, y) => fanBtns.find(o => x >= o.x0 && x <= o.x1 && y >= o.y0 && y <= o.y1);
 
 // fan out the stack word b sits in (button or double click); a stack reaching into a locked line stays
@@ -3628,33 +3802,47 @@ function tutArea(el) {
 const tutArrows = [];
 function tutPlace() {
 	let list = [];
+	const dlg = document.querySelector('dialog[open]');
 	if (tut) {
 		const st = TUT[tut.i];
 		const p = tut.done ? $('tutNext') : st.point && !$('dlgRef').open ? st.point() : null;    // done: on to Weiter
 		list = (Array.isArray(p) ? p : [p]).filter(Boolean);
+	} else if (asst.on && dlg && dlg === $('dlgFolder')) {
+		list = [dlg.querySelector('button[value="close"]')];           // folder list: on with Fertig – schließen
+	} else if (asst.on && asst.step && asst.step.point && asstArrow() && !dlg) {
+		const p = asst.step.point();
+		list = (Array.isArray(p) ? p : [p]).filter(Boolean);
 	}
+	const host = dlg && list.length && !tut ? dlg : document.body;      // a modal dialog lies on top: the arrows go into it
 	list.forEach((p, i) => {
 		let a = tutArrows[i];
 		if (!a) {
 			a = tutArrows[i] = document.createElement('div');
 			a.className = 'tut-arrow';
 			a.innerHTML = '<svg viewBox="0 0 34 46" aria-hidden="true"><path d="M10 2h14v22h8L17 44 2 24h8z"/></svg>';
-			document.body.append(a);
 		}
+		if (a.parentNode !== host) host.append(a);
 		const r = p.getBoundingClientRect ? p.getBoundingClientRect() : p;
-		const up = r.top < 56, x = r.left + r.width / 2 - 17;
+		const up = r.top < 56 || !!(p.closest && p.closest('header')), x = r.left + r.width / 2 - 17;    // header: from below
 		const off = r.top + r.height < 0 || r.top > innerHeight || (!r.width && !r.height);
 		a.hidden = off;
 		a.classList.toggle('up', up);
-		a.style.left = Math.max(2, Math.min(innerWidth - 36, x)) + 'px';
-		a.style.top = (up ? r.top + r.height + 4 : r.top - 50) + 'px';
+		const L = Math.max(2, Math.min(innerWidth - 36, x)), T = up ? r.top + r.height + 4 : r.top - 50;
+		a.style.left = L + 'px';
+		a.style.top = T + 'px';
+		if (host !== document.body && !off) {         // inside a dialog 'fixed' may count from the dialog: correct by what came out
+			const g = a.getBoundingClientRect();
+			a.style.left = L + L - g.left + 'px';
+			a.style.top = T + T - g.top + 'px';
+		}
 	});
 	for (let i = list.length; i < tutArrows.length; i++) tutArrows[i].hidden = true;
 }
 function tutPoint() {
 	tutPlace();
-	if (tut) requestAnimationFrame(tutPoint);
+	requestAnimationFrame(tutPoint);
 }
+requestAnimationFrame(tutPoint);
 
 async function startTut() {
 	if (!await askSave()) return;
@@ -3666,8 +3854,9 @@ async function startTut() {
 	try { $('settings').hidePopover(); } catch (e) { /* not open */ }
 	$('sylMode').value = 'auto';
 	$('sylMode').onchange();
-	const wasOn = !!tut;
 	tut = {i: 0, s: {}, done: false};
+	document.body.classList.remove('simple');          // the tutorial shows the whole studio
+	$('asst').hidden = true;
 	const d = LRC.parse(TUT_LRC), at = s => d.lines.find(ln => LRC.lineText(ln, false).startsWith(s));
 	// loading sorts the lines by time: put 'Hier stimmt' back before 'Ich komme', for the order step
 	d.lines = ['Juicy', 'Alle', 'Der', 'Diese', 'Hier', 'Ich', 'Kurz', 'Eine'].map(at);
@@ -3676,7 +3865,6 @@ async function startTut() {
 	$('tut').hidden = false;
 	$('btnTut').classList.add('on');
 	tutGo(0);
-	if (!wasOn) requestAnimationFrame(tutPoint);
 }
 
 function tutGo(i) {
@@ -3720,6 +3908,7 @@ function endTut() {
 	$('btnTut').classList.remove('on');
 	tutPlace();
 	setDoc({meta: [], lines: [], warnings: []}, '', null);    // the example song goes, it needs no saving
+	setSimple(simple, false);                                // simple mode and the assistant come back
 	refRaw = '';
 	hint('Jetzt dein Song: 📁 Ordner mit Audio und LRC öffnen – oder ♪ Audio und LRC öffnen bzw. Neu aus Text.');
 }
@@ -3738,10 +3927,10 @@ $('tutBody').addEventListener('click', e => {
 });
 $('splashTut').addEventListener('click', () => startTut());
 $('words').addEventListener('click', e => { if (e.target.closest('.tut-start')) startTut(); });
-// the card is moved by its head
-document.querySelector('.tut-head').addEventListener('pointerdown', e => {
+// the cards (tutorial, assistant) are moved by their head
+document.querySelectorAll('.tut-head').forEach(head => head.addEventListener('pointerdown', e => {
 	if (e.target.closest('button')) return;
-	const card = $('tut'), r = card.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+	const card = head.parentElement, r = card.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
 	const mv = ev => {
 		card.style.left = Math.max(0, Math.min(innerWidth - r.width, ev.clientX - dx)) + 'px';
 		card.style.top = Math.max(0, Math.min(innerHeight - 40, ev.clientY - dy)) + 'px';
@@ -3751,7 +3940,594 @@ document.querySelector('.tut-head').addEventListener('pointerdown', e => {
 	addEventListener('pointermove', mv);
 	addEventListener('pointerup', up);
 	e.preventDefault();
+}));
+
+// ---------------------------------------------------------------- assistant: leads through the song, one spot at a time
+// Juicy says what to do next and the red arrow blinks on what to use: choose the files, paste the original lyrics, a
+// short first round (move the card, tempo, add / delete / change a word, undo), then every spot from the start of the
+// song to its end (per line the text against the original first, then the timing), at the end listen once to the whole
+// song, save and Fertig. The arrow shows when a step starts and again whenever nothing has happened for a while.
+// Simple mode (✨) is the same in a slim studio: only the line being fixed shows, in the word list and in the timeline,
+// and most buttons go. In the normal studio the Juicy head switches it on and off.
+
+const TIME_FIX = new Set(['unset', 'same', 'order', 'endorder', 'endlate']);   // fixed by clicking words in again
+const INTRO = ['move', 'tempo', 'add', 'del', 'word', 'undo'];                 // the first round, once per browser
+
+// what is still to do, in song order (lines put off with Später last): each difference to the original, then one
+// timing job per line
+function asstTasks() {
+	const per = new Map(), add = (li, t) => { if (!per.has(li)) per.set(li, []); per.get(li).push(t); };
+	for (const d of dupPairs()) {                // the same word twice on top of itself first: fusing fixes text and timing
+		const sk = asst.skip.get(doc.lines[d.li]);
+		if (!(sk && sk.has('dup'))) add(d.li, {kind: 'dup', li: d.li, ti: d.ti});
+	}
+	for (const o of overhangs()) {               // an end reaching under the next word / line: cut it back
+		const sk = asst.skip.get(doc.lines[o.li]);
+		if (!(sk && sk.has('trim'))) add(o.li, Object.assign({kind: 'trim'}, o));
+	}
+	doc.lines.forEach((ln, li) => {               // a word in the wrong place of its line first: sorting it also fixes the text
+		const sk = asst.skip.get(ln);
+		if (!(sk && sk.has('wordorder')) && sortWords(li, true)) add(li, {kind: 'wordorder', li});
+	});
+	if (refLines) refDiffs.forEach(d => add(d.li, {kind: 'ref', li: d.li, d}));
+	const codes = new Map();
+	for (const i of issues) {
+		if (i.level === 'info' && i.code !== 'unset') continue;
+		const ln = doc.lines[i.li], sk = ln && asst.skip.get(ln);
+		if (!ln || ln.brk || (sk && sk.has(i.code))) continue;
+		if (!codes.has(i.li)) codes.set(i.li, []);
+		codes.get(i.li).push(i);
+	}
+	for (const [li, list] of codes) {
+		const has = c => list.find(i => i.code === c);
+		const fix = list.filter(i => TIME_FIX.has(i.code));
+		const long = list.find(i => i.code === 'long' && !i.end), end = list.find(i => i.code === 'noend' || (i.code === 'long' && i.end));
+		const t = has('lineorder') ? {kind: 'lineorder', i: has('lineorder')} : fix.length ? {kind: 'retap', list: fix} :
+			long ? {kind: 'long', i: long} : end ? {kind: 'end', i: end} : has('overlap') ? {kind: 'overlap', i: has('overlap')} : null;
+		if (t) add(li, Object.assign(t, {li}));
+	}
+	const later = li => asst.later.has(doc.lines[li]) ? 1 : 0;
+	return [...per.keys()].sort((a, b) => later(a) - later(b) || a - b).flatMap(li => per.get(li));
+}
+
+function aTok(li, ti) { return (tokEls[li] && tokEls[li][ti]) || null; }
+const aShown = el => el && el.getClientRects().length ? el : null;                // only what is on the page
+const aWord = (li, ti) => { const k = doc.lines[li] && doc.lines[li].tokens[ti]; return k ? k.text.replace(/\|/g, '') : ''; };
+const aBtn = a => $('asstActs').querySelector('[data-a="' + a + '"]');
+const aBody = (li, ti) => tutCv(bodies.find(o => o.li === li && o.ti === ti));
+// a spot in the timeline as a rect on the page (for the arrow), at the top edge of the canvas
+function aAt(t) {
+	if (t == null) return $('timeline');
+	const r = tl.getBoundingClientRect(), x = (t - view.start) / view.span * tl.clientWidth;
+	return x < 0 || x > tl.clientWidth ? $('timeline') : {left: r.left + x - 1, top: r.top, width: 2, height: 30};
+}
+
+// the words to click in again for these problems: only the ones that are wrong (a stack of two = those two), whole
+// syllable groups; null = the whole line
+function asstRange(li, list) {
+	const tk = doc.lines[li].tokens;
+	let a = Infinity, b = -1;
+	for (const i of list) {
+		if (i.code === 'same' || i.code === 'order') { a = Math.min(a, i.ti - 1); b = Math.max(b, i.ti); }
+		else if (i.code === 'unset') { a = Math.min(a, i.ti); b = Math.max(b, i.ti); }
+		else return null;
+	}
+	a = Math.max(0, a);
+	while (a > 0 && tk[a].glue) a--;
+	while (b < tk.length - 1 && tk[b + 1].glue) b++;
+	return a === 0 && b === tk.length - 1 ? null : {a, b};
+}
+
+// the step for right now: {key, title, html, acts: [[id, label, primary]], point, focus: Set of lines | null}
+function asstStep() {
+	const files = [$('btnFolder'), $('btnAudio'), $('btnOpen')];
+	if (INTRO[asst.intro] === 'move') return {key: 'i-move', title: 'Hallo, ich bin Juicy!',
+		html: 'Ich führe dich Schritt für Schritt durch deinen Song und zeige dir mit dem <b class="tut-err">roten Pfeil</b>, ' +
+			'was als Nächstes dran ist. Mich kannst du überall hinschieben, wo ich nicht störe.' +
+			'<div class="asst-task">👉 Deine erste Mission: Fass mich <b>oben an</b> (Pfeil) und schieb mich bitte mal näher an den Text – ' +
+			'in das gestrichelte Feld in der Mitte.</div>',
+		acts: [['next', 'Überspringen'], ['nointro', 'Kenne ich schon']], point: () => [document.querySelector('#asst .tut-head img'), $('asstZone')]};
+	if (!doc.lines.length && !audio.src) return {key: 'files', title: 'Los geht’s: dein Song',
+		html: 'Wähle deinen <b>Ordner</b> mit den Audio- und LRC-Dateien (📁) – dann zeige ich dir, was zusammengehört. ' +
+			'Oder einzeln: erst <b>♪ Audio</b>, dann die passende <b>LRC</b>. In der LRC-Datei steht der <b>Songtext</b> mit den Zeiten, ' +
+			'wann welches Wort gesungen wird. Hast du nur den Songtext, nimm <b>Neu aus Text</b>.',
+		point: () => files};
+	if (!doc.lines.length) return {key: 'lrc', title: 'Jetzt die LRC', html: 'Audio ist da ✓ Jetzt die passende <b>LRC öffnen</b>: ' +
+		'In dieser Datei steht der <b>Songtext</b> – Zeile für Zeile, mit den Zeiten, wann welches Wort gesungen wird. ' +
+		'Hast du nur den Songtext, nimm <b>Neu aus Text</b> und füg ihn ein.', point: () => [$('btnOpen'), $('btnNew')]};
+	if (!audio.src) return {key: 'audio', title: 'Jetzt das Audio', html: 'Die LRC ist da ✓ Jetzt das passende <b>♪ Audio</b> dazu, ' +
+		'damit du hörst, wo die Wörter sitzen.', point: () => $('btnAudio')};
+	if (edit) return asstEditStep();
+	if (!refLines && !asst.noRef) return {key: 'ref', title: 'Original-Lyrics holen',
+		html: 'Lade jetzt am besten die <b>Original-Lyrics</b> vom Track hier rein – z. B. von einer Lyrics-Seite kopieren und einfügen. ' +
+			'Dann gleiche ich sie mit deiner LRC ab und finde falsche, fehlende und überzählige Wörter.<br>' +
+			'Keine Sorge, ich bin schlau: Ist dein Track ein <b>Remix</b>, nimm einfach den Text vom <b>Original-Lied</b> – ' +
+			'Wiederholungen und weggeschnittene Teile verstehe ich. Überschriften wie <code>[Chorus]</code> oder <code>[Strophe 2]</code>, ' +
+			'Leerzeilen zwischen den Strophen und Wörter in <code>( )</code> stören mich nicht – einfach alles so einfügen, wie es ist.',
+		acts: [['ref', '📋 Original-Lyrics einfügen', 1], ['noref', 'Ohne Original weiter']], point: () => aShown($('btnRef')) || aBtn('ref')};
+	if (asst.intro < INTRO.length) { const s = asstIntroStep(); if (s) return s; }
+	const ck = asstCheck();
+	if (ck) return ck;
+	const tasks = asstTasks(), t = tasks[0];
+	asst.left = tasks.length;
+	if (t) return asstTaskStep(t);
+	const lastEnd = Math.max(0, ...doc.lines.map((ln, li) => (lineRange(li) || {b: 0}).b));
+	if (!asst.listened) {
+		const on = asst.listening && !audio.paused;
+		return {key: 'listen' + on, title: 'Einmal das ganze Lied anhören',
+			html: 'Alle Stellen sind durch ✓ Hör dir zum Schluss einmal das ganze Lied an und lies mit – gern wieder auf <b>100 %</b>. ' +
+				'Klingt eine Zeile falsch, klick sie unten an und dann <b>Diese Zeile neu einklicken</b>.',
+			acts: [['listen', on ? '❚❚ Pause' : asst.listening ? '▶ Weiter anhören' : '▶ Ganzes Lied anhören', 1],
+				['retapcur', 'Diese Zeile neu einklicken'], ['listened', 'Passt, weiter']],
+			point: () => aBtn(on ? 'listened' : 'listen'), lastEnd};
+	}
+	const st = (doc.meta.find(m => m[0] === 'status') || [])[1];
+	if (dirty) return {key: 'save', title: 'Speichern', html: 'Klingt alles gut? Dann <b>speichern</b>. Die LRC muss heißen wie dein Audio, ' +
+		'damit der Player sie findet – den Namen schlage ich vor.', point: () => $('btnSave')};
+	if (st !== 'Fertig') return {key: 'done', title: 'Fertig machen', html: '<b>🎉 Fertig</b> trägt deinen Namen ein, markiert die LRC ' +
+		'als fertig und speichert sie.', point: () => $('btnDone')};
+	return {key: 'finished', title: 'Geschafft! 🎉', html: '„' + esc(fileName) + '“ ist fertig. ' +
+		(folder && folder.songs.length > 1 ? 'Weiter mit dem nächsten Song aus deinem Ordner?' : 'Für den nächsten Song einfach Audio und LRC öffnen.'),
+		acts: folder && folder.songs.length > 1 ? [['nextsong', 'Nächster Song ▶', 1]] : [], point: () => folder ? aBtn('nextsong') : files};
+}
+
+// the first round on the user's own song: tempo, a test word in and out again, a word changed and undone
+function asstIntroStep() {
+	const step = INTRO[asst.intro], skip = ['nointro', 'Kenne ich schon'];
+	if (step === 'tempo') return {key: 'i-tempo', title: 'Tipp: das Tempo',
+		html: 'Gesungene Wörter sind schnell vorbei. Mein Tipp: Hör den Song erst kurz <b>normal</b> (100 %), damit du ihn im Ohr hast – ' +
+			'dann stell auf <b>50 %</b> und geh so mit mir durch die Fehler. So findest du jede Stelle viel genauer.<br>' +
+			'Das Tempo stellst du hier oben um (Pfeil), die Tonhöhe bleibt dabei gleich. Die Tasten <b>1 – 4</b> gehen auch.',
+		acts: [['play100', '▶ Kurz normal anhören'], ['rate50', '50 % einstellen', 1], skip], point: () => document.querySelector('.seg')};
+	let d = asst.demo;
+	if (!d || !doc.lines[d.li]) {                 // the demo word: the first word of the first line with timed words
+		const li = doc.lines.findIndex(ln => !ln.brk && ln.tokens.length > 1 && ln.tokens[0].t != null && ln.tokens[1].t != null);
+		if (li < 0) { asst.intro = INTRO.length; return null; }
+		d = asst.demo = {li, ti: 0, n: doc.lines[li].tokens.length, text: doc.lines[li].tokens[0].text};
+	}
+	const ln = doc.lines[d.li], n = ln.tokens.length, base = {li: d.li, focus: new Set([d.li])};
+	if (step === 'add') {
+		if (n > d.n) { asstIntroNext(); return asstIntroStep(); }
+		return {...base, key: 'i-add', title: 'Ein Wort einfügen', demo: d.ti,
+			html: 'Fehlt mal ein Wort, fährst du in der Liste mit der Maus über das Wort davor: Rechts daneben ist ein grünes <b>+</b> (Pfeil). ' +
+				'Ein Klick darauf fügt ein Wort dahinter ein – es bekommt gleich eine Zeit zwischen seinen Nachbarn.<br>' +
+				'Probier’s aus, z. B. mit „Test“ – oder ich mach’s dir vor.',
+			acts: [['demoadd', 'Zeig’s mir', 1], ['next', 'Überspringen'], skip],
+			point: () => { const e = aTok(d.li, d.ti); return e && (e.querySelector('.tadd') || e); }};
+	}
+	if (step === 'del') {
+		if (n <= d.n) { asstIntroNext(); return asstIntroStep(); }
+		return {...base, key: 'i-del', title: 'Ein Wort löschen', demo: d.ti + 1,
+			html: 'Da ist das neue Wort ✓ Und so wird man ein Wort wieder los: das kleine <b>×</b> oben rechts am Wort (Pfeil). ' +
+				'Lösch das Testwort wieder.',
+			acts: [['demodel', 'Zeig’s mir', 1], skip],
+			point: () => { const e = aTok(d.li, d.ti + 1); return e && (e.querySelector('.tx') || e); }};
+	}
+	if (step === 'word') {
+		if (aWord(d.li, d.ti) !== d.text.replace(/\|/g, '')) { asstIntroNext(); return asstIntroStep(); }
+		return {...base, key: 'i-word', title: 'Ein Wort umschreiben', ti: d.ti,
+			html: 'Ist ein Wort falsch geschrieben, mach einen <b>Doppelklick</b> darauf und schreib es neu. ' +
+				'Probier’s aus: Doppelklick auf das Wort (Pfeil) und ändere es – keine Sorge, gleich machen wir es wieder rückgängig.',
+			acts: [['next', 'Überspringen'], skip], point: () => aTok(d.li, d.ti)};
+	}
+	if (aWord(d.li, d.ti) === d.text.replace(/\|/g, '')) { asstIntroNext(); return null; }
+	return {...base, key: 'i-undo', title: 'Rückgängig und wieder vor', ti: d.ti,
+		html: 'Vertan? <b>↶ Zurück</b> oben rechts (oder Strg+Z) nimmt den letzten Schritt zurück, <b>↷ Vor</b> holt ihn wieder. ' +
+			'Mach deine Änderung jetzt rückgängig.<br>Danach geht es los mit den Stellen in deinem Song.',
+		acts: [['undo', '↶ Zurück', 1], ['next', 'Weiter']], point: () => [$('btnUndo'), $('btnRedo')]};
+}
+
+function asstIntroNext(all = false) {
+	asst.intro = all ? INTRO.length : asst.intro + 1;
+	if (asst.intro >= INTRO.length) try { localStorage.setItem('lrcEditorAsstIntro', '1'); } catch (e) { /* ignore */ }
+}
+
+// a word just inserted from the original: is it where it is sung?
+function asstCheck() {
+	const c = asst.check, li = c ? doc.lines.indexOf(c.ln) : -1, ti = li >= 0 ? c.ln.tokens.indexOf(c.k) : -1;
+	if (ti < 0 || c.k.t == null) { asst.check = null; return null; }
+	return {key: 'check:' + li + ':' + ti, li, ti, focus: new Set([li]), title: 'Sitzt das neue Wort richtig?',
+		html: '„<b>' + esc(aWord(li, ti)) + '</b>“ ist jetzt drin und hat eine Zeit mitten zwischen seinen Nachbarn bekommen. ' +
+			'Hör rein (🔊), ob es dort gesungen wird – der Pfeil zeigt auf seinen <b>Anfang</b> in der Zeitleiste.<br>' +
+			'Sitzt es nicht: Zieh seine <b>Box</b> (der Balken unter dem Wort) dahin, wo es gesungen wird, ihre <b>Kanten</b> machen es länger ' +
+			'oder kürzer – oder versetz oben seine <b>Marke</b>. Passt es, klick <b>Passt so</b>.',
+		acts: [['hear', '🔊 Anhören', 1], ['checkok', 'Passt so'], ['retapck', 'Neu einklicken']],
+		point: () => [aAt(c.k.t), aBody(li, ti)]};
+}
+
+function asstTaskStep(t) {
+	const li = t.li, ln = doc.lines[li], z = 'Zeile ' + (li + 1), hear = ['hear', '🔊 Anhören'];
+	const base = {li, focus: new Set([li])};
+	if (t.kind === 'ref') {
+		const d = t.d, w = '„' + esc(d.have || '') + '“', want = '„' + esc(d.want || '') + '“', id = 'ref:' + d.key;
+		if (d.kind === 'sub') return {...base, key: id, ti: d.ti0, title: d.near ? 'Ist das das richtige Wort?' : 'Falsches Wort?',
+			html: z + ': Hier steht ' + w + (d.near ? ' – klingt ähnlich wie ' + want + ' aus dem Original. Ist das gemeint?' :
+				', im Original steht ' + want + '.') + ' Klick auf <b>↔ ' + esc(d.want) + '</b> über dem Wort zum Tauschen – ' +
+				'oder <b>Passt so</b>, wenn deins stimmt.',
+			acts: [['apply', '↔ ' + d.want, 1], ['skipref', 'Passt so'], hear],
+			point: () => { const e = aTok(li, d.ti0); return e && (e.querySelector('.tsug') || e); }};
+		if (d.kind === 'miss') return {...base, key: id, ti: Math.max(0, d.ti0 - 1), title: 'Hier fehlt ein Wort',
+			html: z + ': Im Original steht ' + (d.after ? 'nach „' + esc(d.after) + '“' : 'am Anfang') + ' noch ' + want + '. ' +
+				'<b>Einfügen</b> setzt es gleich mit einer Zeit zwischen seine Nachbarn – danach prüfen wir zusammen, ob es dort richtig sitzt.',
+			acts: [['apply', '＋ ' + d.want + ' einfügen', 1], ['skipref', 'Passt so'], hear],
+			point: () => aBtn('apply')};
+		if (d.kind === 'extra') return {...base, key: id, ti: d.ti0, title: 'Ein Wort zu viel?',
+			html: z + ': ' + w + ' steht nicht im Original. Wird es doch gesungen, lass es mit <b>Passt so</b> stehen.',
+			acts: [['apply', '✕ ' + d.have + ' löschen', 1], ['skipref', 'Passt so'], hear],
+			point: () => aTok(li, d.ti0)};
+		return {...base, key: id, ti: 0, title: 'Zeile nicht im Original',
+			html: z + ' kommt im Original nicht vor – vielleicht ein Zwischenruf, ein Ad-lib oder ein anderer Text. Hör rein: ' +
+				'Wird sie so gesungen, ist alles gut.', acts: [['skipref', 'Passt so', 1], hear], point: () => aBtn('skipref')};
+	}
+	const id = t.kind + ':' + li + ':' + LRC.lineText(ln, false), back = asst.later.has(ln) ? 'Jetzt die schwierige Stelle von vorhin. ' : '';
+	if (t.kind === 'dup') return {...base, key: id + ':' + t.ti, ti: t.ti, codes: ['dup'], title: 'Doppeltes Wort?',
+		html: z + ': „<b>' + esc(aWord(li, t.ti)) + '</b>“ steht zweimal fast genau übereinander – wahrscheinlich wurde es nur einmal gesungen ' +
+			'und ist aus Versehen doppelt drin. <b>⇊ Fusionieren</b> macht eins daraus: Das obere wird gelöscht, das untere bleibt mit seiner Zeit. ' +
+			'Wird es wirklich zweimal gesungen, klick <b>Beide behalten</b>.',
+		acts: [['fuse', '⇊ Fusionieren', 1], ['skip', 'Beide behalten'], hear],
+		point: () => tutCv(fuseBtns.find(o => o.li === li && o.ti === t.ti)) || aBtn('fuse')};
+	if (t.kind === 'trim') {
+		const nli = t.line ? doc.lines.findIndex((x, j) => j > li && !x.brk && !LRC.isBg(x)) : -1;
+		return {...base, key: id + ':' + t.ti + ':' + t.to, ti: t.ti, codes: ['trim'], to: t.to, title: 'Das Ende steht über',
+			focus: new Set([li, nli].filter(x => x >= 0)),
+			html: z + ': Das ' + (t.line ? 'Satzende' : 'Ende') + ' von „<b>' + esc(aWord(li, t.ti)) + '</b>“ reicht unter den Anfang ' +
+				(t.line ? 'des nächsten Satzes' : 'von „' + esc(t.word) + '“') + ' – meistens ist es einfach zu lang. ' +
+				'<b>✂ Ende kürzen</b> setzt es genau auf diesen Anfang (die orange Linie in der Zeitleiste). ' +
+				'Singen sich die beiden wirklich ins Wort, klick <b>Passt so</b>.',
+			acts: [['trim', '✂ Ende kürzen', 1], ['skip', 'Passt so'], hear],
+			point: () => tutCv(trimBtns.find(o => o.li === li && o.ti === t.ti)) || aBtn('trim')};
+	}
+	if (t.kind === 'wordorder') {
+		const o = issues.filter(i => i.li === li && (i.code === 'order' || i.code === 'same')), range = o.length ? asstRange(li, o) : null;
+		return {...base, key: id, ti: o.length ? o[0].ti : 0, codes: ['wordorder'], range, title: 'Wort an der falschen Stelle im Satz',
+			html: z + ': Ein Wort steht im Satz an einer anderen Stelle, als es gesungen wird – in der Zeitleiste liegt es <b class="tut-err">rot</b> ' +
+				'eine Ebene höher. Stimmt seine <b>Zeit</b> (hör rein), rückt <b>⇄ hier einsortieren</b> (Pfeil) es im Satz genau dorthin. ' +
+				'Stimmt seine Zeit nicht, klick die Wörter neu ein.',
+			acts: [['resort', '⇄ Hier einsortieren', 1], ['retap', '▶ Neu einklicken'], ['skip', 'Überspringen'], hear],
+			point: () => tutCv(wordBtns.find(o => o.li === li)) || aBtn('resort')};
+	}
+	if (t.kind === 'lineorder') {
+		const pli = lineOrder().get(li);
+		return {...base, key: id, ti: 0, focus: new Set([li, pli].filter(x => x != null)), title: 'Zeile an der falschen Stelle',
+			html: z + ' steht im Text nach Zeile ' + ((pli ?? li - 1) + 1) + ', kommt im Lied aber früher. Ein Klick sortiert alle Zeilen nach ihrer Zeit.',
+			acts: [['sort', '⇅ Nach Zeit sortieren', 1]], point: () => tutCv(orderBtns.find(o => o.li === li)) || aBtn('sort')};
+	}
+	if (t.kind === 'retap') {
+		const c = new Set(t.list.map(i => i.code)), n = ln.tokens.filter(k => k.t == null).length;
+		const stack = t.list.filter(i => i.code === 'same').length + 1, hard = stack >= 4, none = n === ln.tokens.length;
+		const range = asstRange(li, t.list), cnt = range ? range.b - range.a + 1 : ln.tokens.length;
+		const sorts = c.has('order') && sortWords(li, true);
+		const what = range ? (cnt === 1 ? 'das Wort' : 'die ' + cnt + ' Wörter') : 'den Satz';
+		const retap = ['retap', '▶ ' + (range ? (cnt === 1 ? 'Wort' : cnt + ' Wörter') + ' neu einklicken' : 'Satz einklicken'), !sorts];
+		return {...base, key: id, ti: range ? range.a : t.list[0].ti, codes: [...c], range,
+			title: back ? 'Die schwierige Stelle' : hard ? 'Oh, eine schwierige Stelle' : c.has('same') ? 'Hier ist wohl was schiefgegangen' :
+				none ? 'Satz einklicken' : c.has('unset') ? 'Wörter ohne Zeit' : 'Reihenfolge durcheinander',
+			html: back + (c.has('same') ? z + ': ' + stack + ' Wörter liegen übereinander – sie haben alle dieselbe Zeit. ' :
+				none ? z + ' hat noch keine Zeiten. ' : c.has('unset') ? z + ': ' + n + (n === 1 ? ' Wort hat' : ' Wörter haben') + ' noch keine Zeit. ' :
+				z + ': Die Zeiten stehen nicht in der richtigen Reihenfolge. ') +
+				(sorts ? 'Ein Wort steht im Satz an der falschen Stelle, seine Zeit stimmt aber vielleicht (rot, eine Ebene höher). ' +
+					'<b>⇄ Nach Zeit ordnen</b> rückt es im Satz dahin, wo es gesungen wird. Sonst ' : '') +
+				(sorts ? 'klicken' : 'Klicken') + ' wir ' + what + ' neu ein: Wort für Wort, von vorne nach hinten – ich zeige dir jeden Schritt.' +
+				(hard && !back ? '<br>Das ist ein großer Fehler. Manchmal ist es leichter, so eine Stelle erst zu <b>überspringen</b> – wir kommen ' +
+					'am Ende hierher zurück. Bei so großen Fehlern kann auch der <b>Anfang</b> etwas weiter links oder rechts liegen als jetzt (Pfeil ' +
+					'in der Zeitleiste) – hör genau hin.' : ''),
+			acts: [sorts ? ['resort', '⇄ Nach Zeit ordnen', 1] : null, retap, hard && !back ? ['later', 'Später'] : ['skip', 'Überspringen'], hear].filter(Boolean),
+			point: () => hard && !back ? [aBtn('retap'), aAt(LRC.lineTime(ln))] : aBtn(sorts ? 'resort' : 'retap')};
+	}
+	if (t.kind === 'long') return {...base, key: id, ti: t.i.ti, codes: ['long'], title: 'Ein Wort ist sehr lang',
+		html: z + ': „' + esc(aWord(li, t.i.ti)) + '“ ' + esc(t.i.msg) + '. Meistens ist danach eine Pause, oder die Zeiten sind verrutscht. ' +
+			'Hör rein und klick den Satz neu ein – oder <b>Passt so</b>, wenn das Wort wirklich so lang gehalten wird.',
+		acts: [['retap', '▶ Satz neu einklicken', 1], ['skip', 'Passt so'], hear], point: () => aBtn('retap')};
+	if (t.kind === 'end') {
+		const last = ln.tokens.length - 1, sg = sugg.get(li);
+		return {...base, key: id, ti: last, codes: ['noend', 'long'], title: 'Wo hört das Wort auf?',
+			html: 'Am Ende von ' + z + ' fehlt das <b>Ende</b>: Wo hört „' + esc(aWord(li, last)) + '“ auf zu klingen? ' +
+				'Gesungene Wörter werden oft lang gehalten – mit dem Ende weiß die Karaoke-Maschine, wie lange das Wort ungefähr dauert.<br>' +
+				(sg != null ? 'Die gestrichelte Linie <i>Ende?</i> in der Zeitleiste (Pfeil) ist mein Vorschlag: Du kannst sie mit der Maus ' +
+					'dahin <b>ziehen</b>, wo das Wort aufhört, und mit ✓ übernehmen. Oder ' : 'Dafür ') +
+				'<b>⏹ Ende einklicken</b>: anhören und an der richtigen Stelle klicken.',
+			acts: [['end', '⏹ Ende einklicken', 1], sg != null ? ['endok', '✓ Vorschlag passt'] : null, hear].filter(Boolean),
+			point: () => sg != null ? [aAt(sugg.get(li)), aBtn('end')] : aBtn('end')};
+	}
+	return {...base, key: id, ti: 0, focus: new Set([li - 1, li].filter(x => x >= 0)), codes: ['overlap'], title: 'Zeilen überlappen',
+		html: z + ' beginnt, bevor Zeile ' + li + ' zu Ende ist. Singen hier zwei Stimmen gleichzeitig (Duett, Hintergrund), passt das so. ' +
+			'Sonst klick den Satz neu ein.', acts: [['retap', '▶ Satz neu einklicken', 1], ['skip', 'Passt so'], hear], point: () => aBtn('retap')};
+}
+
+// the open line: one word after the other, then the line end, then OK
+function asstEditStep() {
+	const li = edit.li, ln = doc.lines[li], focus = new Set([li]);
+	const cancel = ['cancel', 'Abbrechen'];
+	if (edit.free || !sel || sel.li !== li) {
+		const fixing = performance.now() - asst.fix < 5000;
+		return {key: 'ok:' + li, focus, title: 'Fertig – passt alles?',
+			html: 'Das läuft jetzt im Loop. Passt alles? Dann klick <b>✓ OK</b>.<br>Zum Korrigieren: die <b>Box</b> eines Wortes in der Zeitleiste ' +
+				'ziehen (ihre Kanten = länger / kürzer) – oder oben die <b>Marke</b> des Wortes versetzen. Du kannst auch ein Wort anklicken und neu setzen.',
+			acts: [['fixhow', 'Wie korrigiere ich?'], cancel],
+			point: () => fixing ? [aBody(li, 0), aAt((ln.tokens[0] || {}).t)] : $('btnOk')};
+	}
+	const k = ln.tokens[sel.ti], slow = asst.placed < 3;
+	const a = edit.upto != null && repair ? Math.min(...[...repair.ghost.keys()].filter(x => x.startsWith(li + ':')).map(x => +x.split(':')[1])) : 0;
+	const n = (edit.upto != null ? edit.upto : ln.tokens.length - 1) - a + 1;
+	const g = repair && repair.ghost.get(li + ':' + sel.ti);
+	const where = () => {                       // its old time when that is still a help (not stacked), else just after the word before
+		const p = selTime();
+		return aAt(g && g.t != null && !sel.end && (p == null || g.t > p + 0.05) ? g.t : p != null ? p + (sel.end ? 0.6 : 0.3) : edit.zone && edit.zone.a0);
+	};
+	const listen = 'Hör mit <b>Rechtsklick</b> in die Zeitleiste rein (gedrückt halten = weiterhören)';
+	const touch = '<br><small>Touchscreen: lange drücken = anhören, tippen = setzen.</small>';
+	const speed = slow ? '<br>Zu schnell? <b>Hier langsamer</b> machen – 50 % ist ideal –, dann findest du die Stelle genauer.' : '';
+	if (sel.end) return {key: 'end:' + li + ':' + sel.ti, focus, title: sel.ti === ln.tokens.length - 1 ? 'Und jetzt das Ende' : 'Ende vor der Pause',
+		html: 'Wo hört „' + esc(aWord(li, sel.ti)) + '“ auf zu klingen? ' + listen + ', <b>Linksklick</b> setzt das Ende. ' +
+			'Gehaltene Wörter klingen länger – so weiß die Karaoke-Maschine, wie lang das Wort ist. Danach kannst du das Ende in der Zeitleiste ' +
+			'auch noch ziehen.' + speed + touch,
+		acts: [['hearw', '🔊 Stelle anhören'], cancel], point: () => slow ? [where(), document.querySelector('.seg')] : where()};
+	return {key: 'word:' + li + ':' + sel.ti, focus, title: 'Wort für Wort (' + (sel.ti - a + 1) + ' / ' + n + ')',
+		html: 'Finde „<b>' + esc(aWord(li, sel.ti)) + '</b>“: ' + listen + '. Gefunden? <b>Linksklick</b> setzt das Wort genau dort, ' +
+			'dann ist das nächste dran.' + (g && g.t != null ? ' Grau gestrichelt siehst du, wo es vorher war.' : '') + speed + touch,
+		acts: [['hearw', '🔊 Stelle anhören'], cancel], point: () => slow ? [where(), document.querySelector('.seg')] : where(), k};
+}
+
+// on a new step: bring its line into view and mark the word it is about
+function asstGo(s) {
+	if (s.li == null || edit || !doc.lines[s.li]) return;
+	const ln = doc.lines[s.li], ti = Math.max(0, Math.min(s.ti || 0, ln.tokens.length - 1));
+	if (!audio.paused && !asst.listening) pause();
+	loop = null;
+	setSel({li: s.li, ti, end: false}, false);
+	const r = lineRange(s.li);
+	if (!r) return;
+	view.span = Math.max(4, Math.min(30, (r.b - r.a) * 1.6 + 1));          // the line in the middle, with room around it
+	view.start = Math.max(0, r.a - (view.span - (r.b - r.a)) / 2);
+	if (audio.paused) seek(Math.max(0, r.a - 0.05));
+}
+
+// first mission: a dashed field in the middle of the screen, the card is dragged into it -> on to the next step
+function asstZone() {
+	const z = $('asstZone'), on = asst.on && !tut && INTRO[asst.intro] === 'move';
+	z.hidden = !on;
+	if (!on) return;
+	const c = $('asst').getBoundingClientRect(), w = Math.min(c.width + 60, innerWidth - 32), h = c.height + 50;
+	Object.assign(z.style, {width: w + 'px', height: h + 'px', left: (innerWidth - w) / 2 + 'px', top: Math.max(8, (innerHeight - h) / 2) + 'px'});
+	const r = z.getBoundingClientRect(), cx = c.left + c.width / 2, cy = c.top + c.height / 2;
+	if (c.width && cx > r.left && cx < r.right && cy > r.top && cy < r.bottom) {
+		asstIntroNext();
+		z.hidden = true;
+		const b = $('asst').getBoundingClientRect();
+		burst(b.left, b.top, b.width, 20, 18);
+		hint('Super! So kannst du mich jederzeit verschieben.');
+	}
+}
+
+// arrow on at the start of a step and after a few seconds without a click or key
+const asstArrow = () => asst.act <= asst.at + 200 || performance.now() - asst.act > 5000;
+
+function asstTick() {
+	if (!asst.on || tut) { $('asstZone').hidden = true; return; }
+	if (asst.listening) {
+		const end = Math.max(0, ...doc.lines.map((ln, li) => (lineRange(li) || {b: 0}).b));
+		if (audio.ended || (!audio.paused && clock() >= end + 0.5)) { asst.listening = false; asst.listened = true; pause(); }
+	}
+	asstZone();
+	const s = asst.step = asstStep();
+	asst.focus = s.focus || null;
+	if (s.key !== asst.key) {
+		asst.key = s.key;
+		asst.at = performance.now();
+		$('asstTitle').textContent = s.title;
+		$('asstBody').innerHTML = s.html;
+		$('asstActs').innerHTML = (s.acts || []).map(a => '<button type="button" data-a="' + a[0] + '"' + (a[2] ? ' class="primary"' : '') + '>' +
+			esc(a[1]) + '</button>').join('');
+		asstGo(s);
+		asstLines();
+		let p = s.point && s.point();
+		if (Array.isArray(p)) p = p[0];
+		if (p && p.scrollIntoView && !$('asst').contains(p)) p.scrollIntoView({block: 'nearest'});
+	}
+	const tasks = refLines || asst.noRef ? asst.left : null;
+	$('asstCount').textContent = !doc.lines.length || !audio.src || s.key.startsWith('i-') ? '' : edit ? 'Zeile ' + (edit.li + 1) :
+		tasks ? 'noch ' + tasks + (tasks === 1 ? ' Stelle' : ' Stellen') : tasks === 0 ? '✓' : '';
+	document.body.classList.toggle('afocus-on', !!asst.focus);
+	tutPlace();
+}
+setInterval(asstTick, 250);
+
+// the lines the step is about: marked in the word list (simple mode shows only them), the word it is about too; in
+// the first round the word whose + or × is shown
+function asstLines() {
+	const f = asst.on && !tut ? asst.focus : null, s = asst.step;
+	lineEls.forEach((el, i) => el && el.classList.toggle('afocus', !!f && f.has(i)));
+	$('words').querySelectorAll('.aword, .ademo').forEach(el => el.classList.remove('aword', 'ademo'));
+	const w = f && s && s.li != null && s.ti != null && aTok(s.li, s.ti);
+	if (w) w.classList.add('aword');
+	const dm = f && s && s.demo != null && aTok(s.li, s.demo);
+	if (dm) dm.classList.add('ademo');
+}
+// simple mode: the timeline draws only the lines the step is about
+function tlHidden(li) { return simple && !tut && asst.on && !!asst.focus && !asst.focus.has(li); }
+
+// a short listen: from t for dur seconds of the song, then back (like holding the right button)
+function asstHear(t, dur = 2.5) {
+	if (t == null) return;
+	audition(Math.max(0, t), true);
+	setTimeout(releaseSnip, dur / rate * 1000);
+}
+
+// the line clicked in again word by word (repair of this one line: old times stay grey as a help)
+function asstRetap(li) {
+	if (edit || li == null || !doc.lines[li]) return;
+	clearPicked();
+	picked.add(li);
+	startRepair();
+}
+
+// only words a..b of a line clicked in again (a stack of two: just those two); the rest of the line stays
+function asstRetapRange(li, a, b) {
+	const ln = doc.lines[li];
+	if (edit || !ln || !audio.src) return;
+	pushUndo();
+	clearPicked();
+	repair = {lines: [li], idx: 0, ghost: new Map()};
+	edit = {li, before: JSON.stringify(ln), free: false, upto: b};
+	for (let ti = a; ti <= b; ti++) {
+		const k = ln.tokens[ti];
+		repair.ghost.set(li + ':' + ti, {t: k.t, end: k.end});
+		k.t = null;
+		k.end = null;
+	}
+	sel = {li, ti: a, end: false};
+	lastPlaced = null;
+	changed();
+	openZone();
+	const p = ln.tokens[a - 1];
+	if (p && p.t != null) {                        // the loop box starts just before the word in front of them
+		edit.zone.a0 = p.t;
+		edit.zone.a = Math.max(0, p.t - 0.3 - preRoll());
+		showRange(edit.zone.a, edit.zone.b);
+		seek(edit.zone.a);
+	}
+	hint('Nur ' + (b - a + 1) + ' Wörter neu einklicken: Rechtsklick hört an, Linksklick setzt. Enter = OK, Esc = Abbrechen.');
+}
+
+function asstSkip(s) {
+	const ln = doc.lines[s.li];
+	if (!ln) return;
+	const set = asst.skip.get(ln) || new Set();
+	(s.codes || []).forEach(c => set.add(c));
+	asst.skip.set(ln, set);
+}
+
+$('asstActs').addEventListener('click', e => {
+	const b = e.target.closest('[data-a]'), s = asst.step;
+	if (!b || !s) return;
+	const a = b.dataset.a, d = s.key.startsWith('ref:') ? refDiffs.find(x => 'ref:' + x.key === s.key) : null;
+	if (a === 'ref') $('btnRef').onclick();
+	else if (a === 'noref') asst.noRef = true;
+	else if (a === 'next') asstIntroNext();
+	else if (a === 'nointro') asstIntroNext(true);
+	else if (a === 'play100') { setRate(1); asstHear(Math.max(0, (lineRange(0) || {a: 0}).a - 0.5), 12); }
+	else if (a === 'rate50') { setRate(0.5); asstIntroNext(); }
+	else if (a === 'demoadd') {
+		const ln = doc.lines[s.li], k = ln.tokens[s.demo];
+		pushUndo();
+		ln.tokens.splice(s.demo + 1, 0, {text: 'Test', t: null, end: null, glue: false});
+		timeInserted(s.li, s.demo, 1);
+		changed();
+		if (k) hint('„Test“ nach „' + k.text + '“ eingefügt.');
+	} else if (a === 'demodel') tokAction('del', s.li, s.demo);
+	else if (a === 'undo') undo();
+	else if (a === 'apply' && d) {
+		if (d.kind === 'sub') tokAction('swap', d.li, d.ti0);
+		else {
+			applyRef(d);
+			const ln = doc.lines[d.li], k = d.kind === 'miss' && ln && ln.tokens[d.ti0];
+			if (k && k.text === d.want && k.t != null) asst.check = {ln, k};        // inserted: check where it sits
+		}
+	} else if (a === 'skipref' && d) { refSkip.add(d.key); changed(false); }
+	else if (a === 'skip') { asstSkip(s); changed(false); }
+	else if (a === 'later') { asst.later.add(doc.lines[s.li]); asst.key = ''; }
+	else if (a === 'sort') sortLines();
+	else if (a === 'resort') sortWords(s.li);
+	else if (a === 'fuse') fuseWords(s.li, s.ti);
+	else if (a === 'trim') trimEnd(s.li, s.ti, s.to);
+	else if (a === 'retap') { if (s.range) asstRetapRange(s.li, s.range.a, s.range.b); else asstRetap(s.li); }
+	else if (a === 'retapcur') { asst.listening = false; pause(); asstRetap(sel ? sel.li : playLi); }
+	else if (a === 'checkok') asst.check = null;
+	else if (a === 'retapck') { asst.check = null; asstRetapRange(s.li, s.ti, s.ti); }
+	else if (a === 'end') {
+		if (startEdit(s.li)) { sel = {li: s.li, ti: doc.lines[s.li].tokens.length - 1, end: true}; renderSelection(); }
+	} else if (a === 'endok') tokAction('endok', s.li, doc.lines[s.li].tokens.length - 1);
+	else if (a === 'hear') {
+		const r = lineRange(s.li), k = doc.lines[s.li].tokens[s.ti || 0];
+		const t = k && k.t != null ? k.t - (s.key.startsWith('check') ? 1 : 0.3) : r ? r.a - 0.3 : null;
+		asstHear(t, r && t != null ? Math.min(6, Math.max(2, r.b - t + 0.3)) : 2.5);
+	} else if (a === 'hearw') {
+		const t = selTime();
+		asstHear(t != null ? t - 0.2 : edit.zone ? edit.zone.a : null);
+	} else if (a === 'cancel') endEdit(false);
+	else if (a === 'fixhow') { asst.fix = performance.now(); asst.at = asst.fix; asst.key = ''; }
+	else if (a === 'listen') {
+		if (!audio.paused) pause();
+		else {
+			if (!asst.listening || clock() >= (s.lastEnd || 0)) seek(Math.max(0, (lineRange(0) || {a: 0}).a - 1));
+			asst.listening = true;
+			loop = null;
+			play();
+		}
+	} else if (a === 'listened') { asst.listening = false; asst.listened = true; pause(); }
+	else if (a === 'nextsong') stepSong(1);
+	setTimeout(asstTick, 0);
 });
+
+// a new song: everything the assistant knew about the old one goes
+function asstReset() {
+	asst.noRef = false;
+	asst.listened = false;
+	asst.listening = false;
+	asst.skip = new WeakMap();
+	asst.later = new WeakSet();
+	asst.check = null;
+	asst.demo = null;
+	asst.key = '';
+}
+
+function setAsst(on, keep = true) {
+	asst.on = on || simple;
+	asst.key = '';
+	$('asst').hidden = !asst.on || !!tut;
+	$('btnAsst').classList.toggle('on', asst.on);
+	if (keep) try { localStorage.setItem('lrcEditorAsst', on ? '1' : '0'); } catch (e) { /* ignore */ }
+	if (!asst.on) { asst.focus = null; document.body.classList.remove('afocus-on'); asstLines(); tutPlace(); }
+	asstTick();
+}
+
+// ✨ simple mode: a slim studio with the assistant always on and the timeline paging instead of following (Folgen
+// off); 🛠 Profi-Modus = the full studio again, as it was
+let sylBefore = null, followBefore = null;
+function setSimple(on, keep = true) {
+	simple = on;
+	document.body.classList.toggle('simple', on && !tut);
+	$('btnSimple').textContent = on ? '🛠 Profi-Modus' : '✨ Simple-Modus';
+	$('btnSimple').title = on ? 'Zurück ins volle Studio mit allen Werkzeugen' :
+		'Simple-Modus: ein schlankes Studio, Juicy führt dich Stelle für Stelle durch den Song';
+	if (on && $('sylMode').value !== 'off') { sylBefore = $('sylMode').value; $('sylMode').value = 'off'; $('sylMode').onchange(); }
+	else if (!on && sylBefore) { $('sylMode').value = sylBefore; sylBefore = null; $('sylMode').onchange(); }
+	if (on && followBefore == null) { followBefore = $('follow').checked; $('follow').checked = false; }
+	else if (!on && followBefore != null) { $('follow').checked = followBefore; followBefore = null; }
+	if (keep) try { localStorage.setItem('lrcEditorSimple', on ? '1' : '0'); } catch (e) { /* ignore */ }
+	let a = false;
+	try { a = localStorage.getItem('lrcEditorAsst') === '1'; } catch (e) { /* ignore */ }
+	setAsst(on || a, false);
+	fitPreview();
+}
+$('btnSimple').onclick = () => setSimple(!simple);
+$('btnAsst').onclick = () => setAsst(!asst.on);
+$('asstClose').onclick = () => simple ? setSimple(false) : setAsst(false);
+$('splashSimple').addEventListener('click', () => setSimple(true));
+// what the user does: the arrow steps back while they work and comes again when nothing happens
+addEventListener('pointerdown', e => { if (!e.target.closest('#asst')) asst.act = performance.now(); }, true);
+addEventListener('keydown', () => { asst.act = performance.now(); }, true);
+try {
+	asst.placed = +localStorage.getItem('lrcEditorAsstPlaced') || 0;
+	asst.intro = localStorage.getItem('lrcEditorAsstIntro') === '1' ? INTRO.length : 0;
+} catch (e) { /* ignore */ }
+
+// touch screens: a long press into the timeline plays from there (like the right button), a tap sets as usual
+let touchHold = null;
+tl.addEventListener('pointerdown', e => {
+	if (e.pointerType !== 'touch') return;
+	const t = tlTime(e.offsetX), h = touchHold = {on: false};
+	h.timer = setTimeout(() => { h.on = true; audition(t, true); }, 380);
+});
+const touchUp = () => {
+	if (!touchHold) return;
+	clearTimeout(touchHold.timer);
+	if (touchHold.on) { releaseSnip(); touchHeldAt = performance.now(); }    // no tap after a long press
+	touchHold = null;
+};
+tl.addEventListener('pointerup', touchUp);
+tl.addEventListener('pointercancel', touchUp);
+try { setSimple(localStorage.getItem('lrcEditorSimple') === '1', false); } catch (e) { setSimple(false, false); }
 
 // ---------------------------------------------------------------- splash: Juicy and the start jingle
 // Browsers only let a page make sound after a click or key, so if the jingle is blocked the splash waits for one.
