@@ -1795,24 +1795,6 @@ function drawTimeline(now) {
 		ctx.fillText(label, bx + 6, by + 11);
 		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
 	}
-	// an end that reaches under the next word or the start of the next line: a button there cuts it back to that start
-	trimBtns = [];
-	for (const o of overhangs()) {
-		if (tlHidden(o.li) || o.to < t0 || o.to > t0 + sp) continue;
-		const label = '✂ Ende bis ' + (o.line ? 'zum nächsten Satz' : '„' + o.word + '“') + ' kürzen', bw = ctx.measureText(label).width + 12, bh = 15;
-		const bx = Math.max(2, Math.min(W - bw - 2, X(o.to) + 3)), by = 58;
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
-		ctx.fillStyle = C.warn;
-		ctx.fillRect(X(o.to) - 1, by - 4, 2, LANE_Y - by);          // where the end would go
-		ctx.globalAlpha = hov ? 1 : 0.9;
-		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		trimBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti, to: o.to});
-	}
 	// the same word twice, almost on top of itself: a button over the pair fuses them (the upper one goes)
 	fuseBtns = [];
 	for (const d of dups) {
@@ -1877,6 +1859,26 @@ function drawTimeline(now) {
 		orderBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li});
 	}
 
+	ctx.font = 'bold 10px ' + UI_FONT;
+	// an end that reaches under the next word or the start of the next line: a button under the line boxes
+	// (drawn last, so no lifted line covers it), its arrow pointing left to where the end should go, cuts it back to that start
+	trimBtns = [];
+	for (const o of overhangs()) {
+		if (tlHidden(o.li) || o.to < t0 || o.to > t0 + sp) continue;
+		const label = '◀ ✂ Ende bis ' + (o.line ? 'zum nächsten Satz' : '„' + o.word + '“') + ' kürzen', bw = ctx.measureText(label).width + 12, bh = 15;
+		const bx = Math.max(2, Math.min(W - bw - 2, X(o.to) + 1)), by = LANE_Y + 22;
+		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		ctx.fillStyle = C.warn;
+		ctx.fillRect(X(o.to) - 1, 40, 2, by + bh - 40);              // where the end would go
+		ctx.globalAlpha = hov ? 1 : 0.9;
+		ctx.beginPath();
+		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
+		ctx.fill();
+		ctx.globalAlpha = 1;
+		ctx.fillStyle = C.ink;
+		ctx.fillText(label, bx + 6, by + 11);
+		trimBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti, to: o.to});
+	}
 	const hb = hoverX != null && hoverY != null && !fanAt(hoverX, hoverY) && bodyAt(hoverX, hoverY);
 	if (hb && hb.stack) {
 		const k = doc.lines[hb.li].tokens[hb.ti];
