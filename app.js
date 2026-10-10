@@ -25,7 +25,14 @@ let ends = new Map();           // 'li:ti' -> when the token stops (LRC.tokEnd),
 let picked = new Set(), pickAnchor = null;    // lines chosen (repair, copy, link)
 let delTarget = 'word';         // what Entf / Backspace deletes outside tapping: 'word' (the marked one) or 'lines' (the chosen ones)
 let wpick = new Set();          // words chosen with the box in the timeline ('li:ti'): dragged, copied, deleted together
-let band = null;                // that box while it is drawn {x0, y0, x1, y1}
+let band = null;
+let wpickAt = null;             // the word last Strg+clicked in the word list, where a Shift+click range starts
+const PILL = 16;                 // size of the round buttons in the timeline
+let lastDir = null;             // the folder opened last time (kept in this browser), see reopenDir
+let pillHov = {k: '', at: 0};   // the round button in the timeline the mouse rests on (its words open after a moment)
+let jumpSel = true;             // Mitspringen: marking a word brings the timeline and the playhead to it (setting)
+let tlTimes = false;            // every word's time under it in the timeline (setting), else only the marked word's
+let qline = null;               // a sentence typed into the timeline: {t0, inp, text}, waiting for its end click                // that box while it is drawn {x0, y0, x1, y1}
 let cmp = null;                 // ≈ compare view in the word list: {ln} = the line the others are compared with
 let simMemo = {key: '', map: new Map()};   // similar lines, kept until the next change (see simOf)
 const SIM_MIN = 0.6;            // from here two lines count as alike
@@ -1077,8 +1084,17 @@ function setSel(s, scroll = true) {
 	followLoop();
 	renderSelection();
 	const t = selTime();
-	if (t != null && audio.paused && (t < view.start || t > view.start + view.span)) view.start = Math.max(0, t - view.span * 0.3);
+	if (jumpSel && t != null && audio.paused && (t < view.start || t > view.start + view.span)) view.start = Math.max(0, t - view.span * 0.3);
 	if (scroll) scrollToSel();
+}
+
+// Mitspringen: the timeline shows the marked word (its line, li) and the playhead waits just before it, so Space plays
+// from there (not the point heard last). Off: view and playhead stay where they are.
+function jumpToSel(li = null) {
+	if (!jumpSel) return;
+	if (li != null) showLine(li);
+	const t = selTime();
+	if (t != null && audio.paused) { seek(Math.max(0, t - 0.05)); replayT = null; }
 }
 
 // ---------------------------------------------------------------- editing text
@@ -1127,13 +1143,14 @@ function editLine(li) {
 	changed();
 }
 
-function addLine(li) {
+function addLine(li, before = false) {
 	clearPicked();
-	const raw = prompt('Neue Zeile nach Zeile ' + (li + 1) + ' (| trennt Silben, „v2: “ / „bg: “ davor = Stimme / Hintergrund)');
+	const raw = prompt('Neuer Satz ' + (before ? 'vor' : 'nach') + ' Zeile ' + (li + 1) + ' (| trennt Silben, „v2: “ / „bg: “ davor = Stimme / Hintergrund)');
 	if (!raw || !raw.trim()) return;
 	const {v: vtag, body: v} = LRC.stripVoice(raw);
 	if (!v.trim()) return;
 	pushUndo();
+	if (before) li--;
 	doc.lines.splice(li + 1, 0, {t: null, tokens: LRC.tokensOf(v), brk: false, vtag});
 	sel = {li: li + 1, ti: 0, end: false};
 	changed();
@@ -1150,7 +1167,7 @@ function setBlade(on) {
 	blade = on;
 	$('btnSplit').classList.toggle('on', on);
 	tl.style.cursor = on ? 'crosshair' : '';
-	if (on) hint('✂ Klinge an: Klick in die Zeitleiste teilt die Zeile genau dort. X, Esc oder ✂ = aus.');
+	if (on) hint('✂ Klinge an: oben in ein Wort klicken trennt es an der Silbe (die Striche zeigen wo), unten in die Zeilen-Box klicken teilt die Zeile. X, Esc oder ✂ = aus.');
 }
 
 // ⏸ pause tool, used like the blade: while it is on, a click into the timeline ends the word sung there at that
@@ -1291,9 +1308,11 @@ function renderWords() {
 		const sc = !ln.brk && !simple ? (simOf().get(li) || []).length : 0;
 		const cb = sc ? '<button class="lk cmpb" data-act="cmp" title="Mit ' + sc + (sc === 1 ? ' ähnlichem Satz' : ' ähnlichen Sätzen') +
 			' vergleichen: nur sie bleiben in der Liste, untereinander, mit % und Verlinken">≈' + sc + '</button>' : '';
-		const tools = '<span class="tools">' + (ln.brk ? '' : '<button data-act="edit" title="Zeile bearbeiten">✎</button>') +
-			'<button data-act="add" title="Zeile darunter einfügen">＋</button>' +
-			'<button data-act="del" title="Zeile löschen">✕</button></span>';
+		const tools = '<span class="tools">' + (ln.brk ? '' : '<button data-act="edit" title="Zeile bearbeiten">✎</button>') + '</span>';
+		// as on a word: + at the front / back edge adds a sentence before / after it, × in the corner deletes it
+		const lbtn = '<button class="lpre" data-act="addpre" title="Satz davor einfügen">+</button>' +
+			'<button class="lpost" data-act="add" title="Satz danach einfügen">+</button>' +
+			'<button class="lx" data-act="del" title="Satz löschen">×</button>';
 		const vi = vinfo[li] || {voice: '', bg: false, own: false};
 		const vg = LRC.voiceGroup(vi.voice);
 		const badge = vi.bg ? '<span class="vb bg" title="Hintergrund (bg:)">bg</span>' : vi.voice
@@ -1301,7 +1320,7 @@ function renderWords() {
 			'">' + esc(vi.voice) + '</span>' : '';
 		html.push('<div class="line' + (ln.brk ? ' brk' : '') + (vi.bg ? ' bgline' : '') + (vg && !ln.brk ? ' voice' + vg : '') + (ln.link ? ' linked' : '') +
 			'" data-li="' + li + '"' + (ln.link ? ' style="--lc:' + linkColor(ln.link.id) + '"' : '') + '><div class="ln">' + (li + 1) + ' ' + badge + ' ' + lk + cb + ' ' + tools + '<br>' +
-			(t0 != null ? LRC.fmt(t0) : '–') + '</div><div class="toks">');
+			(t0 != null ? LRC.fmt(t0) : '–') + '</div>' + lbtn + '<div class="toks">');
 		if (ln.brk) {
 			html.push('— Pause / Zeilenende ' + (t0 != null ? LRC.fmt(t0) : '') + ' —');
 		}
@@ -1662,6 +1681,11 @@ function drawTimeline(now) {
 			ctx.fillStyle = C.ink;
 			ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
 		}
+		if (lc && !up && !bg) {                         // linked: its time span tinted in the colour of its group, under the waveform
+			ctx.fillStyle = lc;
+			ctx.globalAlpha = 0.08;
+			ctx.fillRect(x0, 22, Math.max(2, x1 - x0 - 1), y - 22);
+		}
 		ctx.fillStyle = up ? C.err : col;
 		ctx.globalAlpha = up ? 0.35 : cur || pk ? 0.25 : lc ? 0.18 : 0.1;
 		ctx.fillRect(x0, y, Math.max(2, x1 - x0 - 1), h);
@@ -1686,6 +1710,10 @@ function drawTimeline(now) {
 			ctx.fillText((loop && loop.kind === 'line' && loop.li === li ? '↻ ' : '') + (ln.link ? '🔗' + ln.link.id + ' ' : '') + (li + 1) + '  ' +
 				LRC.lineText(ln, false).replace(/\|/g, ''), x0 + 4, y + 13);
 			ctx.restore();
+		}
+		if (!bg && (up || cur || pk || (hoverX != null && Math.abs(hoverX - x1) < 10 && hoverY != null && hoverY >= y - 2 && hoverY <= y + h + 2))) {
+			ctx.fillStyle = up ? C.textHi : col;                 // grip at its end
+			ctx.fillRect(x1 - 4, y + 2, 3, h - 4);
 		}
 		lanes.push({x0, x1, y, h, li, up});
 	};
@@ -1757,7 +1785,8 @@ function drawTimeline(now) {
 		const lv = issueAt.get(e.li + ':' + e.ti);
 		const isSel = sel && !sel.end && sel.li === e.li && sel.ti === e.ti;
 		const sung = now >= e.k.t;
-		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : sung ? C.sung : C.lane;
+		const lkc = doc.lines[e.li].link && !bgw && lv !== 'err' ? linkColor(doc.lines[e.li].link.id) : null;    // linked: the group's colour
+		ctx.fillStyle = lv === 'err' ? C.err : bgw ? (sung ? C.bgv : C.bgvDim) : lkc || (sung ? C.sung : C.lane);
 		const stack = lvl[n] > 0;
 		let bh = bgw ? 9 : 14, by = (bgw ? LANE_Y - 33 : LANE_Y - 21) + (lift.has(e.li) ? LIFT_DY : 0), bw = Math.max(2, xe - x - 1);
 		if (stack) {
@@ -1769,7 +1798,7 @@ function drawTimeline(now) {
 			ctx.font = 'bold 10px ' + UI_FONT;
 			bw = Math.max(bw, 24, ctx.measureText(e.k.text).width + 8);
 		}
-		ctx.globalAlpha = stack ? 0.9 : 0.55;
+		ctx.globalAlpha = stack ? 0.9 : lkc ? (sung ? 0.8 : 0.42) : 0.55;
 		ctx.fillRect(x, by, bw, bh);
 		ctx.globalAlpha = 1;
 		if (stack && bh >= 12) {
@@ -1811,9 +1840,11 @@ function drawTimeline(now) {
 		ctx.font = (bgw ? 'italic ' : e.ti === 0 ? 'bold ' : '') + '13px ' + UI_FONT;
 		if (bgw) ctx.fillStyle = isSel ? C.cursor : C.bgv;
 		ctx.fillText((e.k.glue ? '-' : '') + e.k.text, x + 3, ly + 15);
-		ctx.font = '10px ' + UI_FONT;
-		ctx.fillStyle = C.dim;
-		ctx.fillText(LRC.fmt(e.k.t).slice(3), x + 3, ly + 28);
+		if (tlTimes || isSel) {
+			ctx.font = '10px ' + UI_FONT;
+			ctx.fillStyle = isSel ? C.cursor : C.dim;
+			ctx.fillText(LRC.fmt(e.k.t).slice(3), x + 3, ly + 28);
+		}
 		ctx.restore();
 		marks.push({x, li: e.li, ti: e.ti, end: false});
 		if (e.k.end != null) {
@@ -1851,20 +1882,12 @@ function drawTimeline(now) {
 	const dups = dupPairs(), dupAt = new Set(dups.map(d => d.li + ':' + d.ti));
 	for (const {o, n} of tops.values()) {
 		if (n === 2 && (dupAt.has(o.li + ':' + o.ti) || dupAt.has(o.li + ':' + (o.ti - 1)))) continue;
-		const label = '⇔ ' + n + ' Wörter auffächern', bw = ctx.measureText(label).width + 12, bh = 15;
+		const bw = PILL, bh = PILL;
 		let bx = o.x0, by = o.y0 - bh - 2;
 		if (by < 1) { bx = o.x1 + 4; by = Math.max(1, o.y0); }    // no room above a squeezed stack: beside it
 		by = free(bx, by, bw, bh);
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
-		ctx.fillStyle = C.accent;
-		ctx.globalAlpha = hov ? 1 : 0.88;
-		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		fanBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti});
+		const r = pillBtn(ctx, 'fan' + o.li + ':' + o.ti, '⇔', n + ' Wörter auffächern', bx, by, C.accent);
+		fanBtns.push(Object.assign(r, {li: o.li, ti: o.ti}));
 	}
 	// the same word twice, almost on top of itself: a button over the pair fuses them (the upper one goes)
 	// many of the same word on top of each other: one button for all of them (per word, where they lie close)
@@ -1881,20 +1904,12 @@ function drawTimeline(now) {
 	}
 	for (const g of fuseGroups) {
 		const n = g.pairs.length, top = g.top;
-		const label = n > 1 ? '⇊ ' + (n + 1) + '× „' + g.text + '“ – fusionieren' : '⇊ doppelt – fusionieren', bw = ctx.measureText(label).width + 12, bh = 15;
+		const label = n > 1 ? (n + 1) + '× „' + g.text + '“ fusionieren' : 'doppelt – fusionieren', bw = PILL, bh = PILL;
 		let bx = Math.max(2, Math.min(W - bw - 2, g.x0)), by = top.y0 - bh - 2;
 		if (by < 1) { bx = Math.min(W - bw - 2, g.x1 + 4); by = Math.max(1, top.y0); }
 		by = free(bx, by, bw, bh);
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
-		ctx.fillStyle = C.err;
-		ctx.globalAlpha = hov ? 1 : 0.9;
-		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		fuseBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: g.pairs[0].li, ti: g.pairs[0].ti, pairs: g.pairs});
+		const r = pillBtn(ctx, 'fuse' + g.pairs[0].li + ':' + g.pairs[0].ti, '⇊', label, bx, by, C.err);
+		fuseBtns.push(Object.assign(r, {li: g.pairs[0].li, ti: g.pairs[0].ti, pairs: g.pairs}));
 	}
 	// a word lifted because it stands in the wrong place of its line: a button over it puts it there in the text
 	wordBtns = [];
@@ -1902,18 +1917,20 @@ function drawTimeline(now) {
 	for (const o of bodies) {
 		if (!o.out || seen.has(o.li) || !sortWords(o.li, true)) continue;
 		seen.add(o.li);
-		const label = '⇄ hier in den Satz einsortieren', bw = ctx.measureText(label).width + 12, bh = 15;
-		const bx = Math.max(2, Math.min(W - bw - 2, o.x0)), by = Math.max(1, o.y0 - bh - 3);
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
-		ctx.fillStyle = C.err;
-		ctx.globalAlpha = hov ? 1 : 0.9;
+		const bw = PILL, bh = PILL;
+		const bx = Math.max(2, Math.min(W - bw - 2, o.x0)), by = free(bx, Math.max(1, o.y0 - bh - 3), bw, bh);
+		const ln = lanes.find(l => l.li === o.li && !l.up);
+		ctx.save();                                        // the way down into its line
+		ctx.strokeStyle = C.err;
+		ctx.globalAlpha = 0.6;
+		ctx.setLineDash([3, 3]);
 		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		wordBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li});
+		ctx.moveTo(bx + bw / 2, by + bh);
+		ctx.lineTo(bx + bw / 2, ln ? ln.y : LANE_Y);
+		ctx.stroke();
+		ctx.restore();
+		const r = pillBtn(ctx, 'word' + o.li, '↓', 'Wort hier in den Satz einbetten', bx, by, C.err);
+		wordBtns.push(Object.assign(r, {li: o.li}));
 	}
 	// lifted line boxes last, on top of the words
 	for (const li of lifted) drawLane(doc.lines[li], li, true);
@@ -1925,19 +1942,10 @@ function drawTimeline(now) {
 		const l = lanes.find(o => o.li === li);
 		if (!l) continue;
 		const pt = LRC.lineTime(doc.lines[pli]);
-		const label = '⇄ steht im Text nach Zeile ' + (pli + 1) + ' (' + LRC.fmt(pt).slice(0, 5) + ' →)  · Klick: nach Zeit sortieren';
-		const bw = ctx.measureText(label).width + 12, bh = 15;
-		const bx = Math.max(2, Math.min(W - bw - 2, l.x0)), by = l.y + l.h + 2;
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
-		ctx.fillStyle = C.warn;
-		ctx.globalAlpha = hov ? 1 : 0.9;
-		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
-		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		orderBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li});
+		const label = 'steht im Text nach Zeile ' + (pli + 1) + ' (' + LRC.fmt(pt).slice(0, 5) + ' →) · Klick: nach Zeit sortieren';
+		const bx = Math.max(2, Math.min(W - PILL - 2, l.x0)), by = l.y + l.h + 2;
+		const r = pillBtn(ctx, 'order' + li, '⇄', label, bx, by, C.warn);
+		orderBtns.push(Object.assign(r, {li}));
 	}
 
 	ctx.font = 'bold 10px ' + UI_FONT;
@@ -1946,19 +1954,14 @@ function drawTimeline(now) {
 	trimBtns = [];
 	for (const o of overhangs()) {
 		if (tlHidden(o.li) || o.to < t0 || o.to > t0 + sp) continue;
-		const label = '◀ ✂ Ende bis ' + (o.line ? 'zum nächsten Satz' : '„' + o.word + '“') + ' kürzen', bw = ctx.measureText(label).width + 12, bh = 15;
-		const bx = Math.max(2, Math.min(W - bw - 2, X(o.to) + 1)), by = LANE_Y + 22;
-		const hov = hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + bw && hoverY >= by && hoverY <= by + bh;
+		const label = 'Ende bis ' + (o.line ? 'zum nächsten Satz' : '„' + o.word + '“') + ' kürzen', bh = PILL;
+		const bx = Math.max(2, Math.min(W - PILL - 2, X(o.to) + 1)), by = LANE_Y + 22;
 		ctx.fillStyle = C.warn;
+		ctx.globalAlpha = 0.7;
 		ctx.fillRect(X(o.to) - 1, 40, 2, by + bh - 40);              // where the end would go
-		ctx.globalAlpha = hov ? 1 : 0.9;
-		ctx.beginPath();
-		if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 7); else ctx.rect(bx, by, bw, bh);
-		ctx.fill();
 		ctx.globalAlpha = 1;
-		ctx.fillStyle = C.ink;
-		ctx.fillText(label, bx + 6, by + 11);
-		trimBtns.push({x0: bx, x1: bx + bw, y0: by, y1: by + bh, li: o.li, ti: o.ti, to: o.to});
+		const r = pillBtn(ctx, 'trim' + o.li + ':' + o.ti, '✂', label, bx, by, C.warn);
+		trimBtns.push(Object.assign(r, {li: o.li, ti: o.ti, to: o.to}));
 	}
 	const hb = hoverX != null && hoverY != null && !fanAt(hoverX, hoverY) && bodyAt(hoverX, hoverY);
 	if (hb && hb.stack) {
@@ -2014,17 +2017,40 @@ function drawTimeline(now) {
 	}
 
 	// ✂ blade: a red cut line at the mouse with its time
+	// over a word (above the line boxes) it snaps to the syllable it would cut: small ticks at every syllable, the
+	// chosen one red; over the line boxes it cuts the line right at the mouse
 	if (blade && hoverX != null) {
+		const cb = !edit && hoverY != null && cutColAt(hoverX, hoverY), cs = cb && cutSplit(cb.li, cb.ti, LRC.q(t0 + hoverX / W * sp));
+		const bx = cs ? X(cs.t) : hoverX;
+		if (cs) {
+			for (const c of cs.cuts) {
+				if (c === cs.cuts.find(o => o.at === cs.at)) continue;
+				ctx.strokeStyle = C.err;
+				ctx.globalAlpha = 0.55;
+				ctx.setLineDash([3, 3]);
+				ctx.beginPath();
+				ctx.moveTo(X(c.t) + 0.5, 20);
+				ctx.lineTo(X(c.t) + 0.5, LANE_Y - 3);
+				ctx.stroke();
+				ctx.setLineDash([]);
+				ctx.globalAlpha = 1;
+			}
+			ctx.globalAlpha = 0.3;                      // the mouse itself, faint
+			ctx.fillStyle = C.err;
+			ctx.fillRect(hoverX, 20, 1, LANE_Y - 23);
+			ctx.globalAlpha = 1;
+		}
 		ctx.strokeStyle = C.err;
 		ctx.lineWidth = 2;
 		ctx.beginPath();
-		ctx.moveTo(hoverX, 0);
-		ctx.lineTo(hoverX, H);
+		ctx.moveTo(bx, 0);
+		ctx.lineTo(bx, cs ? LANE_Y - 3 : H);
 		ctx.stroke();
 		ctx.lineWidth = 1;
 		ctx.font = 'bold 12px ' + UI_FONT;
 		ctx.fillStyle = C.err;
-		ctx.fillText('✂ ' + LRC.fmt(LRC.q(t0 + hoverX / W * sp)).slice(3), Math.min(W - 70, hoverX + 5), 14);
+		const lb = cs ? '✂ ' + cs.a + ' | ' + cs.b : '✂ Zeile teilen ' + LRC.fmt(LRC.q(t0 + hoverX / W * sp)).slice(3);
+		ctx.fillText(lb, Math.max(0, Math.min(W - ctx.measureText(lb).width - 6, bx + 5)), 14);
 	}
 
 	// mouse placement: the marked word as a flag at the mouse, its name centred on top
@@ -2101,6 +2127,7 @@ function frame() {
 	$('btnLoop').classList.toggle('on', !!loop);
 	drawTimeline(now);
 	drawWpick();
+	drawQline();
 	drawOverview(now);
 }
 
@@ -2133,6 +2160,7 @@ window.addEventListener('keydown', e => {
 	else if (k === 'Backspace') backTap();
 	else if (low === 'e') { if (edit || tapMode()) endNow(); else canTime(); }
 	else if (low === 'p') setPauser(!pauser);
+	else if (k === 'Escape' && qline) { quickClose(); hint('Satz verworfen.'); }
 	else if (k === 'Escape' && cmp) closeCmp();
 	else if (k === 'Escape' && wpick.size) { wpick = new Set(); renderWpick(); hint('Wörter abgewählt.'); }
 	else if (k === 'Escape' && pickMode) setPickMode(false);
@@ -2294,9 +2322,11 @@ $('words').addEventListener('click', e => {
 	if (btn) {
 		const li = +btn.closest('.line').dataset.li;
 		if (edit && !(btn.dataset.act === 'edit' && li === edit.li)) { lockedHint(); return; }
-		({edit: editLine, add: addLine, del: delLine, link: linkToggle, version: linkVersion, cmp: openCmp})[btn.dataset.act](li);
+		({edit: editLine, add: addLine, addpre: j => addLine(j, true), del: delLine, link: linkToggle, version: linkVersion, cmp: openCmp})[btn.dataset.act](li);
 		return;
 	}
+	const tk0 = e.target.closest('.tok');
+	if (tk0 && !edit && !simple && (e.shiftKey || e.ctrlKey || e.metaKey)) { wordPick(+tk0.dataset.li, +tk0.dataset.ti, e.shiftKey); return; }
 	if ((e.shiftKey || e.ctrlKey || e.metaKey || pickMode) && e.target.closest('.line')) {
 		pickLine(+e.target.closest('.line').dataset.li, e.shiftKey || e.ctrlKey || e.metaKey ? e : {ctrlKey: true});
 		return;
@@ -2306,10 +2336,10 @@ $('words').addEventListener('click', e => {
 	const li = +(el || row).dataset.li;
 	if (edit && li !== edit.li) { lockedHint(); return; }
 	if (edit) edit.free = false;                  // a word of the open line: it hangs at the mouse again
+	if (wpick.size && el && !wpick.has(li + ':' + el.dataset.ti)) { wpick = new Set(); renderWpick(); }
 	if (el) setSel({li, ti: +el.dataset.ti, end: !!el.dataset.end}, false);
 	else if (doc.lines[li].tokens.length) setSel({li, ti: 0, end: false}, false);
-	showLine(li);
-	if (audio.paused) { const t = selTime(); if (t != null) seek(Math.max(0, t - 0.05)); }
+	jumpToSel(li);
 });
 
 // right click in the word list: select the word (or the line) and listen from there
@@ -2342,7 +2372,7 @@ $('issues').addEventListener('click', e => {
 	const [li, ti, end] = el.dataset.k.split(':');
 	setSel({li: +li, ti: +ti, end: end === 'e'});
 	const t = selTime();
-	if (t != null) { view.start = Math.max(0, t - view.span * 0.4); if (audio.paused) seek(Math.max(0, t - 0.05)); }
+	if (t != null && jumpSel) { view.start = Math.max(0, t - view.span * 0.4); jumpToSel(); }
 });
 
 // timeline: click = jump there (near a mark: mark that word), drag = scroll, wheel = zoom, right click = listen.
@@ -2353,13 +2383,77 @@ tl.addEventListener('contextmenu', e => e.preventDefault());
 tl.addEventListener('mousemove', e => {
 	hoverX = e.offsetX;
 	hoverY = e.offsetY;
-	if (!drag) tl.style.cursor = blade || pauser ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
+	if (!drag) tl.style.cursor = blade || pauser || (qline && qline.text) ? 'crosshair' : tlCursor(e.offsetX, e.offsetY);
 });
+
+// a small round button in the timeline: just its symbol; when the mouse rests on it, it opens to the right and
+// tells what it does. -> its hit box {x0, x1, y0, y1}
+function pillBtn(ctx, key, icon, label, bx, by, col) {
+	ctx.font = 'bold 10px ' + UI_FONT;
+	const lw = ctx.measureText(label).width + PILL + 10, H = PILL;
+	const on = w => hoverX != null && hoverY != null && hoverX >= bx && hoverX <= bx + w && hoverY >= by && hoverY <= by + H;
+	const hov = on(PILL) || (pillHov.k === key && on(lw));
+	if (hov && pillHov.k !== key) pillHov = {k: key, at: performance.now()};
+	else if (!hov && pillHov.k === key) pillHov = {k: '', at: 0};
+	const open = hov && performance.now() - pillHov.at > 350;
+	const w = open ? Math.min(lw, tl.clientWidth - bx - 2) : PILL;
+	ctx.save();
+	ctx.fillStyle = col;
+	ctx.globalAlpha = hov ? 1 : 0.9;
+	ctx.beginPath();
+	if (ctx.roundRect) ctx.roundRect(bx, by, w, H, H / 2); else ctx.rect(bx, by, w, H);
+	ctx.fill();
+	ctx.globalAlpha = 1;
+	ctx.fillStyle = C.ink;
+	ctx.font = 'bold 11px ' + UI_FONT;
+	ctx.fillText(icon, bx + (PILL - ctx.measureText(icon).width) / 2, by + 12);
+	if (open) {
+		ctx.font = 'bold 10px ' + UI_FONT;
+		ctx.fillText(label, bx + PILL + 2, by + 11.5);
+	}
+	ctx.restore();
+	return {x0: bx, x1: bx + w, y0: by, y1: by + H};
+}
+
+// the right edge of a line box (a lifted one first): pulled, it sets where the line ends
+function laneEndAt(x, y) {
+	const ok = l => Math.abs(x - l.x1) < 6 && y >= l.y - 2 && y <= l.y + l.h + 2 && !LRC.isBg(doc.lines[l.li]) && (!edit || edit.li === l.li);
+	return lanes.find(l => l.up && ok(l)) || lanes.find(l => ok(l)) || null;
+}
+
+function dragLineEnd(li, x0) {
+	const ln = doc.lines[li], k = ln.tokens[ln.tokens.length - 1];
+	if (!k || k.t == null) return;
+	let undo = false, moved = false;
+	drag = {x0, moved: false};
+	tl.style.cursor = 'ew-resize';
+	const move = ev => {
+		const xx = ev.clientX - tl.getBoundingClientRect().left;
+		if (!moved && Math.abs(xx - x0) < 3) return;
+		moved = drag.moved = true;
+		if (!undo) { pushUndo(); undo = true; }
+		k.end = Math.max(LRC.q(k.t + 0.05), tlTime(xx));
+		recalc();
+		dragSnip(k.end);
+	};
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		tl.style.cursor = '';
+		drag = null;
+		if (!moved) { setSel({li, ti: ln.tokens.length - 1, end: true}); return; }
+		changed();
+		hint('Zeile ' + (li + 1) + ' endet jetzt bei ' + LRC.fmt(k.end) + '  (Strg+Z = zurück)');
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+}
 
 // what a press would do here: edges resize (ew-resize), word and line boxes move (grab), else the CSS default
 function tlCursor(x, y) {
 	const open = li => !edit || edit.li === li;
 	if (fanAt(x, y) || orderAt(x, y) || wordAt(x, y) || fuseAt(x, y) || trimAt(x, y)) return 'pointer';
+	if (laneEndAt(x, y)) return 'ew-resize';
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {
 		const b = u || lanes.find(l => x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
@@ -2485,8 +2579,14 @@ tl.addEventListener('mousedown', e => {
 		audition(tlTime(x), true);
 		return;
 	}
+	if (e.button === 1) { e.preventDefault(); panDrag(x); return; }
 	if (e.button !== 0) return;
-	if (blade) { cutLine(lineAtX(x, y), tlTime(x)); return; }
+	if (qline) { if (qline.text) quickEnd(tlTime(x)); else quickClose(); return; }
+	if (blade) {                                 // in a word box: syllables there, else the line is cut
+		const wb0 = !edit && cutColAt(x, y);
+		if (!(wb0 && cutWord(wb0.li, wb0.ti, tlTime(x)))) cutLine(lineAtX(x, y), tlTime(x));
+		return;
+	}
 	if (pauser) { pauseAt(lineAtX(x, y), tlTime(x)); return; }
 	const fb = fanAt(x, y);
 	if (fb) { fanClick(fb); return; }
@@ -2497,6 +2597,8 @@ tl.addEventListener('mousedown', e => {
 	if (fb2) { fuseWords(fb2.pairs); return; }
 	const wb = wordAt(x, y);
 	if (wb) { sortWords(wb.li); return; }
+	const le = laneEndAt(x, y);
+	if (le) { dragLineEnd(le.li, x); return; }
 	const u = liftAt(x, y);
 	if (u || y >= LANE_Y - 1) {                  // line box: click = mark that line, drag = move the whole line
 		const on = u || lanes.find(l => !l.up && x >= l.x0 && x <= l.x1 && y >= l.y - 1 && y <= l.y + l.h + 1);
@@ -2777,6 +2879,7 @@ tl.addEventListener('dblclick', e => {
 	if (y < LANE_Y - 1) {                         // double click on a stack: fan it out
 		const b = bodyAt(x, y);
 		if (b) fanClick(b);
+		else if (!edit && !blade && !pauser && !tapMode() && !marks.some(m => Math.abs(m.x - x) < 7)) quickLine(x, y);    // a free spot: type a sentence
 		return;
 	}
 	const b = lanes.find(l => !l.up && x >= l.x0 && x <= l.x1);    // double click on a line box: open it
@@ -2786,8 +2889,8 @@ tl.addEventListener('dblclick', e => {
 tl.addEventListener('wheel', e => {
 	e.preventDefault();
 	const W = tl.clientWidth;
-	if (e.shiftKey) {
-		view.start = Math.max(0, view.start + (e.deltaY || e.deltaX) / W * view.span);
+	if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {     // Shift or a sideways swipe on the touchpad: scroll
+		view.start = Math.max(0, view.start + (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) / W * view.span);
 		return;
 	}
 	const at = view.start + e.offsetX / W * view.span;
@@ -3471,6 +3574,7 @@ $('words').addEventListener('mousedown', e => {
 	const tok = e.target.closest('.tok');
 	if (e.button !== 0 || !tok || e.target.closest('b, button, i') || edit || e.shiftKey || e.ctrlKey || e.metaKey || simple) return;
 	wdrag = {li: +tok.dataset.li, ti: +tok.dataset.ti, x0: e.clientX, y0: e.clientY, el: tok, on: false, drop: null};
+	wdrag.multi = wpick.has(wdrag.li + ':' + wdrag.ti) && lineWordsOf(wpickList()).length > 1;
 	const move = ev => {
 		if (!wdrag.on) {
 			if (Math.hypot(ev.clientX - wdrag.x0, ev.clientY - wdrag.y0) < 6) return;
@@ -3479,9 +3583,15 @@ $('words').addEventListener('mousedown', e => {
 			wdrag.ghost.className = 'wghost';
 			const ln = doc.lines[wdrag.li], w = lineWords(ln).find(o => wdrag.ti >= o.a && wdrag.ti <= o.b);
 			if (w) wdrag.ti = w.a;
-			wdrag.ghost.textContent = w ? w.text : ln.tokens[wdrag.ti].text;
+			if (wdrag.multi) {
+				const ws = lineWordsOf(wpickList()), s = ws.map(o => doc.lines[o.li].tokens.slice(o.a, o.b + 1).map(k => k.text).join('')).join(' ');
+				wdrag.ghost.textContent = (s.length > 40 ? s.slice(0, 38) + '…' : s) + '  (' + ws.length + ')';
+				for (const [l, i] of wpickList()) { const t = tokEls[l] && tokEls[l][i]; if (t) t.classList.add('wdragging'); }
+			} else {
+				wdrag.ghost.textContent = w ? w.text : ln.tokens[wdrag.ti].text;
+				for (let i = w ? w.a : wdrag.ti; i <= (w ? w.b : wdrag.ti); i++) { const t = tokEls[wdrag.li] && tokEls[wdrag.li][i]; if (t) t.classList.add('wdragging'); }
+			}
 			document.body.appendChild(wdrag.ghost);
-			for (let i = w ? w.a : wdrag.ti; i <= (w ? w.b : wdrag.ti); i++) { const t = tokEls[wdrag.li] && tokEls[wdrag.li][i]; if (t) t.classList.add('wdragging'); }
 			document.body.classList.add('wdrag');
 		}
 		ev.preventDefault();
@@ -3515,7 +3625,7 @@ $('words').addEventListener('mousedown', e => {
 		const dl = doc.lines[d.drop.li];
 		let at = d.drop.ti == null ? dl.tokens.length : d.drop.ti;
 		if (d.drop.ti != null && d.drop.after) { at++; while (dl.tokens[at] && dl.tokens[at].glue) at++; }
-		moveWordTo(d.li, d.ti, d.drop.li, at);
+		if (d.multi) moveWordsTo(wpickList(), d.drop.li, at); else moveWordTo(d.li, d.ti, d.drop.li, at);
 	};
 	window.addEventListener('mousemove', move);
 	window.addEventListener('mouseup', up);
@@ -3638,6 +3748,268 @@ function repeatIssues() {
 }
 
 
+// ---------------------------------------------------------------- several words in the word list
+// Strg+click on a word adds it to the chosen words (or takes it out again), Shift+click chooses all words from the
+// last one up to it. They are the same chosen words as with the box in the timeline: one of them dragged in the word
+// list moves all of them there, in their order.
+
+function wordSpan(li, ti) {
+	const tk = doc.lines[li].tokens;
+	let a = ti, b = ti;
+	while (a > 0 && tk[a].glue) a--;
+	while (b + 1 < tk.length && tk[b + 1].glue) b++;
+	return [a, b];
+}
+
+function wordPick(li, ti, range) {
+	const all = [];
+	doc.lines.forEach((ln, l) => { if (!ln.brk) ln.tokens.forEach((k, t) => all.push(l + ':' + t)); });
+	if (range && wpickAt && doc.lines[wpickAt.li]) {
+		let i = all.indexOf(wpickAt.li + ':' + wpickAt.ti), j = all.indexOf(li + ':' + ti);
+		if (i > j) [i, j] = [j, i];
+		if (i >= 0) all.slice(i, j + 1).forEach(id => wpick.add(id));
+	} else {
+		const [a, b] = wordSpan(li, ti), on = !wpick.has(li + ':' + ti);
+		for (let t = a; t <= b; t++) { if (on) wpick.add(li + ':' + t); else wpick.delete(li + ':' + t); }
+		wpickAt = {li, ti};
+	}
+	if (picked.size) clearPicked();
+	delTarget = 'words';
+	renderWpick();
+	const n = lineWordsOf(wpickList()).length;
+	hint(n ? n + (n === 1 ? ' Wort' : ' Wörter') + ' gewählt: eins davon ziehen = alle dorthin schieben (in der Wortliste in eine Zeile, in der Zeitleiste in der Zeit), ' +
+		'Strg+C = kopieren, Entf = löschen, Esc = abwählen' : 'Keine Wörter gewählt.');
+}
+
+// chosen tokens -> whole words [{li, a, b}] in text order
+function lineWordsOf(ids) {
+	const seen = new Set(), out = [];
+	for (const [li, ti] of ids.slice().sort((x, y) => x[0] - y[0] || x[1] - y[1])) {
+		const [a, b] = wordSpan(li, ti);
+		if (seen.has(li + ':' + a)) continue;
+		seen.add(li + ':' + a);
+		out.push({li, a, b});
+	}
+	return out;
+}
+
+// the chosen words moved in front of token `at` of line dl, in their order, each with its time (and syllables)
+function moveWordsTo(ids, dl, at) {
+	const B = doc.lines[dl];
+	if (!B) return;
+	const groups = lineWordsOf(ids).map(o => ({A: doc.lines[o.li], ks: doc.lines[o.li].tokens.slice(o.a, o.b + 1)}));
+	if (!groups.length) return;
+	const moved = groups.flatMap(g => g.ks), mset = new Set(moved);
+	while (B.tokens[at] && B.tokens[at].glue) at++;
+	while (B.tokens[at] && mset.has(B.tokens[at])) at++;            // dropped on one of them: behind it
+	const anchor = B.tokens[at] || null;
+	pushUndo();
+	const from = new Set();
+	for (const g of groups) {
+		const A = g.A, a = A.tokens.indexOf(g.ks[0]), wasLast = a + g.ks.length === A.tokens.length;
+		from.add(A);
+		delete A.link;
+		A.tokens.splice(a, g.ks.length);
+		if (A.tokens[a] && A.tokens[a].glue) A.tokens[a].glue = false;
+		if (wasLast && A !== B) {                                     // the line ends where its last word began
+			const pv = A.tokens[A.tokens.length - 1];
+			if (pv && pv.end == null) pv.end = g.ks[0].t != null ? g.ks[0].t : g.ks[g.ks.length - 1].end;
+		}
+		g.ks[0].glue = false;
+	}
+	delete B.link;
+	const pos = anchor ? B.tokens.indexOf(anchor) : B.tokens.length;
+	const first = moved[0], last = moved[moved.length - 1], pv = B.tokens[pos - 1], nx = B.tokens[pos];
+	if (pv && pv.end != null && first.t != null && first.t - pv.end < 0.3) pv.end = null;
+	if (nx && last.end != null && nx.t != null && last.end >= nx.t - 0.3) last.end = null;
+	if (!nx && last.end == null && pv && pv.end != null && first.t != null && pv.end > first.t) { last.end = pv.end; pv.end = null; }
+	B.tokens.splice(pos, 0, ...moved);
+	let gone = 0;
+	for (let i = doc.lines.length - 1; i >= 0; i--) if (from.has(doc.lines[i]) && !doc.lines[i].tokens.length) { doc.lines.splice(i, 1); gone++; }
+	const nl = doc.lines.indexOf(B);
+	wpick = new Set(moved.map(k => nl + ':' + B.tokens.indexOf(k)));
+	wpickAt = null;
+	delTarget = 'words';
+	sel = {li: nl, ti: B.tokens.indexOf(first), end: false};
+	changed();
+	hint(groups.length + ' Wörter nach Zeile ' + (nl + 1) + ' geschoben' + (gone ? ' (leere Zeilen sind weg)' : '') + '  (Strg+Z = zurück)');
+}
+
+// ---------------------------------------------------------------- ✂ blade into a word: syllables
+// Like the blade in a video editor: a click into a word box cuts the word just there. The text is cut at the syllable
+// border nearest to the click (by the share of the word's time), for a word without syllables at the letter there.
+// The right piece starts at the click, glued to the left one (same word, two syllables).
+
+// the word column under the blade: anywhere above the line boxes, between the word's start and end (a main line
+// before background vocals, the bar the mouse is on first)
+function cutColAt(x, y) {
+	if (y >= LANE_Y - 1) return null;
+	const on = bodies.filter(o => x > o.x0 + 1 && x < o.x1 - 1);
+	return on.find(o => y >= o.y0 && y <= o.y1) || on.find(o => !LRC.isBg(doc.lines[o.li])) || on[0] || null;
+}
+
+// where the word at li/ti can be cut: at its syllables (else between its letters), each at the share of the word's
+// time its letters before it have. c = the blade's time: the nearest of them is taken.
+// -> {cuts: [{at, t}], pick, at, t, a, b} or null
+function cutSplit(li, ti, c) {
+	const ln = doc.lines[li], k = ln && ln.tokens[ti];
+	if (!k || k.t == null) return null;
+	const e = boxEnd(li, ti), txt = k.text, isL = ch => /[\p{L}\p{N}]/u.test(ch);
+	if (e == null || e - k.t < 0.1 || txt.replace(/[^\p{L}\p{N}]/gu, '').length < 2) return null;
+	const m = $('sylMode').value, ps = LRC.syllables(txt, m === 'auto' || m === 'off' ? LRC.guessLang(doc) : m);
+	const pos = [];
+	if (ps.length > 1 && ps.join('') === txt) { let a = 0; ps.slice(0, -1).forEach(p => pos.push(a += p.length)); } else
+		for (let i = 1; i < txt.length; i++) if (isL(txt[i - 1]) && isL(txt[i])) pos.push(i);
+	const n = [...txt].filter(isL).length, before = at => [...txt.slice(0, at)].filter(isL).length;
+	const cuts = pos.map(at => ({at, t: LRC.q(k.t + (e - k.t) * before(at) / n)}));
+	if (!cuts.length) return null;
+	const pick = cuts.reduce((x, y) => Math.abs(y.t - c) < Math.abs(x.t - c) ? y : x);
+	return {cuts: ps.length > 1 ? cuts : [pick], at: pick.at, t: pick.t, a: txt.slice(0, pick.at), b: txt.slice(pick.at)};
+}
+
+function cutWord(li, ti, c) {
+	const s = cutSplit(li, ti, c);
+	if (!s) return false;
+	const ln = doc.lines[li], k = ln.tokens[ti];
+	pushUndo();
+	ln.tokens.splice(ti + 1, 0, {text: s.b, t: s.t, end: k.end, glue: true});
+	k.text = s.a;
+	k.end = null;
+	sel = {li, ti: ti + 1, end: false};
+	changed();
+	hint('✂ „' + s.a + '|' + s.b + '“ getrennt – die Länge ist nach den Silben aufgeteilt. Kanten ziehen = fein richten  (Strg+Z = zurück)');
+	return true;
+}
+
+// ---------------------------------------------------------------- a sentence typed right into the timeline
+// Double click on a free spot of the waveform (like a comment on SoundCloud): a field opens there, the sentence is
+// typed in and Enter takes it; the next click sets where it ends. Its words share that time by their length and
+// come as boxes that are pulled at their edges (longer / shorter) or in the middle (moved), as clips in a DAW.
+
+function quickLine(x, y) {
+	quickClose();
+	const t0 = tlTime(x), r = tl.getBoundingClientRect(), inp = document.createElement('input');
+	inp.className = 'qline';
+	inp.placeholder = 'Satz eintippen, Enter – dann ans Satzende klicken';
+	inp.style.left = Math.max(4, Math.min(innerWidth - 380, r.left + x)) + 'px';
+	inp.style.top = Math.max(4, r.top + y - 16) + 'px';
+	document.body.appendChild(inp);
+	qline = {t0, inp, text: null};
+	inp.focus();
+	inp.addEventListener('keydown', e => {
+		e.stopPropagation();
+		if (e.key === 'Escape') { quickClose(); hint('Satz verworfen.'); }
+		if (e.key !== 'Enter') return;
+		e.preventDefault();
+		const v = inp.value.trim();
+		if (!v) { quickClose(); return; }
+		qline.text = v;
+		inp.remove();
+		qline.inp = null;
+		hint('Jetzt in die Zeitleiste klicken, wo „' + v + '“ endet (Esc = verwerfen).');
+	});
+	inp.addEventListener('blur', () => { if (qline && qline.inp === inp && !qline.text) setTimeout(() => { if (qline && qline.inp === inp) quickClose(); }, 0); });
+	hint('Satz eintippen, Enter – dann ans Satzende klicken. Esc = verwerfen.');
+}
+
+function quickClose() {
+	if (qline && qline.inp) qline.inp.remove();
+	qline = null;
+}
+
+function quickEnd(c) {
+	const a = Math.min(qline.t0, c), b = Math.max(qline.t0, c);
+	if (b - a < 0.2) { hint('Zu kurz – weiter rechts klicken, wo der Satz endet (Esc = verwerfen).'); return; }
+	const {v: vtag, body} = LRC.stripVoice(qline.text), tk = LRC.tokensOf(body);
+	quickClose();
+	if (!tk.length) return;
+	const wt = tk.map(k => Math.max(1, k.text.replace(/[^\p{L}\p{N}]/gu, '').length)), sum = wt.reduce((x, w) => x + w, 0);
+	let acc = 0;
+	tk.forEach((k, i) => { k.t = LRC.q(a + (b - a) * acc / sum); acc += wt[i]; });
+	tk[tk.length - 1].end = LRC.q(b);
+	pushUndo();
+	let at = doc.lines.findIndex(l => { const lt = l.brk ? l.t : LRC.lineTime(l); return lt != null && lt > a; });
+	if (at < 0) at = doc.lines.length;
+	doc.lines.splice(at, 0, {t: null, tokens: tk, brk: false, vtag});
+	clearPicked();
+	sel = {li: at, ti: 0, end: false};
+	changed();
+	hint('Satz gesetzt: die Wortboxen an den Kanten ziehen = länger / kürzer, in der Mitte = verschieben, ✂ (X) in ein Wort = Silben  (Strg+Z = zurück)');
+}
+
+// the sentence waiting for its end: a box from its start to the mouse
+function drawQline() {
+	if (!qline || !qline.text) return;
+	const ctx = tl.getContext('2d'), W = tl.clientWidth, x0 = (qline.t0 - view.start) / view.span * W, x1 = hoverX != null ? hoverX : x0 + 80;
+	const x = Math.min(x0, x1), w = Math.max(2, Math.abs(x1 - x0)), y = LANE_Y - 26;
+	ctx.save();
+	ctx.fillStyle = C.cursor;
+	ctx.globalAlpha = 0.25;
+	ctx.fillRect(x, y, w, 20);
+	ctx.globalAlpha = 1;
+	ctx.strokeStyle = C.cursor;
+	ctx.lineWidth = 2;
+	ctx.strokeRect(x + 1, y + 1, w - 2, 18);
+	ctx.font = 'bold 12px ' + UI_FONT;
+	ctx.fillText(qline.text, x + 6, y - 6);
+	ctx.restore();
+}
+
+// the view moved with the middle mouse button, anywhere in the timeline
+function panDrag(x0) {
+	const s0 = view.start, W = tl.clientWidth;
+	tl.style.cursor = 'grabbing';
+	const move = ev => { view.start = Math.max(0, s0 - (ev.clientX - tl.getBoundingClientRect().left - x0) / W * view.span); };
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		tl.style.cursor = '';
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+}
+
+// pressed beside the words in the word list and dragged: a box, every word it touches is chosen (Shift / Strg: added)
+$('words').addEventListener('mousedown', e => {
+	if (e.button !== 0 || edit || simple || e.target.closest('.tok, .endmark, button, .ln, input, .cmpp, #cmpBar')) return;
+	const base = e.shiftKey || e.ctrlKey || e.metaKey ? new Set(wpick) : new Set(), x0 = e.clientX, y0 = e.clientY;
+	let box = null;
+	const move = ev => {
+		if (!box) {
+			if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+			box = document.createElement('div');
+			box.className = 'lband';
+			document.body.appendChild(box);
+		}
+		ev.preventDefault();
+		const l = Math.min(x0, ev.clientX), t = Math.min(y0, ev.clientY), r = Math.max(x0, ev.clientX), b = Math.max(y0, ev.clientY);
+		Object.assign(box.style, {left: l + 'px', top: t + 'px', width: r - l + 'px', height: b - t + 'px'});
+		wpick = new Set(base);
+		tokEls.forEach((row, li) => row && row.forEach((el, ti) => {
+			if (!el || !el.isConnected || el.closest('.cmp-hide')) return;
+			const q = el.getBoundingClientRect();
+			if (q.width && q.right >= l && q.left <= r && q.bottom >= t && q.top <= b) wpick.add(li + ':' + ti);
+		}));
+		renderWpick();
+	};
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		if (!box) return;
+		box.remove();
+		skipClick = true;
+		setTimeout(() => { skipClick = false; }, 0);
+		if (picked.size) clearPicked();
+		delTarget = 'words';
+		wpickAt = null;
+		const n = lineWordsOf(wpickList()).length;
+		hint(n ? n + (n === 1 ? ' Wort' : ' Wörter') + ' gewählt: eins davon ziehen = alle dorthin schieben, Strg+C = kopieren, Entf = löschen, Esc = abwählen' : 'Keine Wörter in der Box.');
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+});
+
+
 // ---------------------------------------------------------------- choose, copy and paste lines
 // Lines are chosen with Shift / Strg+Klick (line number, word or line box), Strg+A or ☑ Auswählen. Strg+C / ⧉ Kopieren
 // copies them with all their times (as LRC text too, for other programs), Strg+V / 📋 Einfügen puts them in again so
@@ -3723,6 +4095,17 @@ function setTall(on, keep = true) {
 	scrollToSel();
 }
 $('btnTall').onclick = () => setTall(!document.body.classList.contains('tall'));
+
+// ⌃ the header folded into one slim row of symbols (the words stay in the tooltips), ⌄ back
+function setSlimHead(on, keep = true) {
+	document.body.classList.toggle('slimhead', on);
+	$('btnHead').textContent = on ? '⌄' : '⌃';
+	$('btnHead').title = on ? 'Kopfleiste wieder ausklappen (mit Text)' : 'Kopfleiste einklappen: alles in einer schmalen Zeile, nur mit Symbolen';
+	if (keep) try { localStorage.setItem('lrcEditorSlimHead', on ? '1' : ''); } catch (e) { /* ignore */ }
+	window.dispatchEvent(new Event('resize'));
+}
+$('btnHead').onclick = () => setSlimHead(!document.body.classList.contains('slimhead'));
+try { setSlimHead(localStorage.getItem('lrcEditorSlimHead') === '1', false); } catch (e) { setSlimHead(false, false); }
 try { setTall(localStorage.getItem('lrcEditorTall') === '1', false); } catch (e) { setTall(false, false); }
 $('btnCopy').onclick = () => {
 	const text = copyLines();
@@ -3802,11 +4185,23 @@ function fitBase(ln, P) {
 // lines lis into one group, the first one is the model; fresh: always a new group (a new version of the sentence)
 function linkLines(lis, fresh) {
 	const ls = lis.map(li => doc.lines[li]).filter(ln => ln && !ln.brk);
-	const timed = ls.filter(ln => lineBase(ln) != null);
-	if (timed.length < 2) { hint('Zum Verlinken brauchen die Sätze schon eine Zeit – erst setzen.'); return; }
-	if (timed.length < ls.length) hint('Sätze ohne Zeit bleiben außen vor – erst setzen, dann verlinken.');
+	const m = ls[0] && ls[0].tokens.some(k => k.t != null) ? ls[0] : ls.find(ln => ln.tokens.some(k => k.t != null));
+	if (!m || ls.length < 2) { hint('Zum Verlinken braucht mindestens ein Satz schon Zeiten – erst setzen.'); return; }
 	pushUndo();
-	const m = timed[0];
+	// the model (master) passes all its words on; a line without times gets them laid out from its own start
+	// (else just after the line before)
+	const timed = ls.filter(ln => {
+		if (ln === m || ln.tokens.some(k => k.t != null)) return true;
+		if (ln.t != null) return true;
+		let p = doc.lines.indexOf(ln) - 1;
+		while (p >= 0 && !lineRange(p)) p--;
+		const r = p >= 0 ? lineRange(p) : null;
+		if (!r) return false;
+		ln.t = LRC.q(r.b + 0.1);
+		return true;
+	});
+	timed.splice(timed.indexOf(m), 1);
+	timed.unshift(m);
 	const id = !fresh && m.link ? m.link.id : 1 + Math.max(0, ...doc.lines.map(ln => ln.link ? ln.link.id : 0), ...linkPat.keys());
 	if (!m.link || m.link.id !== id) m.link = {id, base: lineBase(m)};
 	const P = linkOf(m);
@@ -3883,6 +4278,14 @@ $('btnLink').onclick = () => {
 };
 
 // Zoom-Tempo is kept in this browser
+$('jumpSel').onchange = () => {
+	jumpSel = $('jumpSel').checked;
+	try { localStorage.setItem('lrcEditorJumpSel', jumpSel ? '' : '0'); } catch (e) { /* ignore */ }
+	hint(jumpSel ? 'Mitspringen an: ein Wort anwählen holt Zeitleiste und Abspielmarke zu ihm.' : 'Mitspringen aus: Wort anwählen lässt Zeitleiste und Abspielmarke, wo sie sind.');
+};
+try { jumpSel = $('jumpSel').checked = localStorage.getItem('lrcEditorJumpSel') !== '0'; } catch (e) { /* ignore */ }
+$('tlTimes').onchange = () => { tlTimes = $('tlTimes').checked; try { localStorage.setItem('lrcEditorTlTimes', tlTimes ? '1' : ''); } catch (e) { /* ignore */ } };
+try { tlTimes = $('tlTimes').checked = localStorage.getItem('lrcEditorTlTimes') === '1'; } catch (e) { /* ignore */ }
 $('zoomSens').onchange = () => { try { localStorage.setItem('lrcEditorZoom2', $('zoomSens').value); } catch (e) { /* ignore */ } };
 try { const z = localStorage.getItem('lrcEditorZoom2'); if (z) $('zoomSens').value = z; } catch (e) { /* ignore */ }
 
@@ -3897,6 +4300,7 @@ async function openFolder() {
 	if (window.showDirectoryPicker) {
 		try {
 			const dir = await showDirectoryPicker({id: 'juicyLrc', mode: 'readwrite'});
+			keepDir(dir);
 			const files = [];
 			await walk(dir, '', files, 0);
 			setFolder(dir.name, files);
@@ -3921,7 +4325,7 @@ const songKey = n => cleanStem(stemOf(n)).toLowerCase().normalize('NFKD').replac
 // looser: without "Artist - " and without (Mix ...) / [Edit ...]
 const looseKey = n => songKey(cleanStem(stemOf(n)).replace(/^.*?\s+-\s+/, '').replace(/\s*[([][^)\]]*[)\]]/g, '') + '.x');
 
-function setFolder(name, files) {
+function setFolder(name, files, show = true) {
 	const by = new Map();
 	for (const f of files) {
 		const key = songKey(f.name);
@@ -3944,7 +4348,8 @@ function setFolder(name, files) {
 	folder = {name, songs: [...by.values()].sort((a, b) => a.key.localeCompare(b.key)), lrcDir: anyLrc ? anyLrc.dir : null, cur: -1};
 	renderSongNav();
 	renderFolder();
-	$('dlgFolder').showModal();
+	if (show) $('dlgFolder').showModal();
+	renderLastDir();
 }
 
 // a new LRC was saved into the folder: show it in the list
@@ -3986,6 +4391,7 @@ async function openSong(s, create) {
 	dirty = false;
 	$('dlgFolder').close();
 	folder.cur = folder.songs.indexOf(s);
+	try { localStorage.setItem('lrcEditorLastSong', s.key); } catch (e) { /* ignore */ }
 	renderSongNav();
 	if (s.audio.length) await loadAudio(await s.audio[0].get(), s.audio[0].handle || null);
 	if (s.lrc.length) {
@@ -4103,6 +4509,7 @@ async function dropFolder(hp, entry) {
 	if (!await askSave()) return;
 	const h = await hp, files = [];
 	if (h && h.kind === 'directory') {
+		keepDir(h);
 		await walk(h, '', files, 0);
 		setFolder(h.name, files);
 		return;
@@ -4123,6 +4530,72 @@ async function walkEntry(dir, path, out, depth) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- the last folder, kept for the next visit
+// Chrome / Edge hand out a folder as a handle that can be kept (in IndexedDB). On the next visit the folder opens again
+// by itself (with the song last open) if the browser still allows it, else ↺ next to Ordner asks once and opens it.
+
+function idbDir(op, val) {
+	return new Promise(res => {
+		try {
+			const rq = indexedDB.open('juicyLrc', 1);
+			rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+			rq.onerror = () => res(null);
+			rq.onsuccess = () => {
+				const st = rq.result.transaction('kv', op === 'get' ? 'readonly' : 'readwrite').objectStore('kv');
+				const r = op === 'get' ? st.get('lastDir') : st.put(val, 'lastDir');
+				r.onsuccess = () => res(op === 'get' ? r.result || null : true);
+				r.onerror = () => res(null);
+			};
+		} catch (e) { res(null); }
+	});
+}
+
+function keepDir(dir) {
+	lastDir = dir;
+	idbDir('put', dir);
+}
+
+function renderLastDir() {
+	const b = $('btnLastDir');
+	b.hidden = !lastDir || !!folder;
+	if (!lastDir) return;
+	b.textContent = '↺ ' + lastDir.name;
+	b.title = 'Den zuletzt geöffneten Ordner „' + lastDir.name + '“ wieder öffnen (mit dem Song von zuletzt)';
+}
+
+// ask: on a click (the browser may ask once for access); else only when access is still there
+async function reopenDir(ask) {
+	if (!lastDir || !lastDir.queryPermission) return false;
+	try {
+		let p = await lastDir.queryPermission({mode: 'readwrite'});
+		if (p !== 'granted' && ask) p = await lastDir.requestPermission({mode: 'readwrite'});
+		if (p !== 'granted') return false;
+		const files = [];
+		await walk(lastDir, '', files, 0);
+		let key = '';
+		try { key = localStorage.getItem('lrcEditorLastSong') || ''; } catch (e) { /* ignore */ }
+		const fresh = !doc.lines.length && $('draft').hidden;     // nothing loaded yet, no draft waiting
+		setFolder(lastDir.name, files, false);
+		const s = folder.songs.find(x => x.key === key);
+		if (s && (ask || fresh)) await openSong(s, false);
+		else if (ask) { renderFolder(); $('dlgFolder').showModal(); }
+		hint('📁 Ordner „' + lastDir.name + '“ wieder geöffnet' + (s && (ask || fresh) ? ', Song: ' + (s.audio[0] || s.lrc[0]).name.replace(/\.[^.]+$/, '') : '') + '.');
+		return true;
+	} catch (e) {
+		return false;
+	}
+}
+
+$('btnLastDir').onclick = async () => {
+	if (!await reopenDir(true)) { hint('Der Ordner ist nicht mehr erreichbar – bitte neu wählen.'); openFolder(); }
+};
+idbDir('get').then(d => {
+	if (!d || !d.queryPermission) return;
+	lastDir = d;
+	renderLastDir();
+	setTimeout(() => { if (!folder) reopenDir(false); }, 300);
+});
 
 window.addEventListener('beforeunload', e => {
 	if (dirty) { e.preventDefault(); e.returnValue = ''; }
@@ -4542,9 +5015,7 @@ $('refList').addEventListener('click', e => {
 	if (edit && d.li !== edit.li) { lockedHint(); return; }
 	const ln = doc.lines[d.li];
 	setSel({li: d.li, ti: Math.max(0, Math.min(d.ti0, ln.tokens.length - 1)), end: false});
-	showLine(d.li);
-	const t = selTime();
-	if (t != null && audio.paused) seek(Math.max(0, t - 0.05));
+	jumpToSel(d.li);
 });
 
 // ---------------------------------------------------------------- splitters: timeline height and side panel width
@@ -4757,7 +5228,7 @@ const TUT = [
 	{title: 'Gestapelte Wörter auffächern', area: () => $('timeline'), setup: () => tutShow('Alle Wörter'),
 		point: () => { const li = tutLine('Alle Wörter'); return tutCv(fanBtns.find(b => b.li === li)); },
 		html: 'In Zeile 2 haben alle vier Wörter dieselbe Zeit: Sie liegen <b class="tut-err">rot</b> übereinander. ' +
-			'Klick auf den Knopf <b>⇔ 4 Wörter auffächern</b> über dem Stapel: Jedes Wort bekommt eine Länge nach seinem Text, ' +
+			'Klick auf den runden Knopf <b>⇔</b> über dem Stapel (Maus kurz drauf = <i>4 Wörter auffächern</i>): Jedes Wort bekommt eine Länge nach seinem Text, ' +
 			'das Zeilenende rückt mit. Würde die Zeile in die nächste laufen, liegt sie rot leuchtend eine Ebene höher, bis du Platz machst.',
 		task: 'Fächere den Stapel in Zeile 2 auf.',
 		check: () => { const li = tutLine('Alle Wörter'); return li >= 0 && new Set(doc.lines[li].tokens.map(k => k.t)).size === doc.lines[li].tokens.length; }},
@@ -5246,7 +5717,7 @@ function asstTaskStep(t) {
 			focus: new Set([li, nli].filter(x => x >= 0)),
 			html: z + ': Das ' + (t.line ? 'Satzende' : 'Ende') + ' von „<b>' + esc(aWord(li, t.ti)) + '</b>“ reicht unter den Anfang ' +
 				(t.line ? 'des nächsten Satzes' : 'von „' + esc(t.word) + '“') + ' – meistens ist es einfach zu lang. ' +
-				'<b>✂ Ende kürzen</b> setzt es genau auf diesen Anfang (die orange Linie in der Zeitleiste). ' +
+				'Der runde Knopf <b>✂</b> (Ende kürzen) setzt es genau auf diesen Anfang (die orange Linie in der Zeitleiste). ' +
 				'Singen sich die beiden wirklich ins Wort, klick <b>Passt so</b>.',
 			acts: [['trim', '✂ Ende kürzen', 1], ['skip', 'Passt so'], hear],
 			point: () => tutCv(trimBtns.find(o => o.li === li && o.ti === t.ti)) || aBtn('trim')};
@@ -5255,7 +5726,7 @@ function asstTaskStep(t) {
 		const o = issues.filter(i => i.li === li && (i.code === 'order' || i.code === 'same')), range = o.length ? asstRange(li, o) : null;
 		return {...base, key: id, ti: o.length ? o[0].ti : 0, codes: ['wordorder'], range, title: 'Wort an der falschen Stelle im Satz',
 			html: z + ': Ein Wort steht im Satz an einer anderen Stelle, als es gesungen wird – in der Zeitleiste liegt es <b class="tut-err">rot</b> ' +
-				'eine Ebene höher. Stimmt seine <b>Zeit</b> (hör rein), rückt <b>⇄ hier einsortieren</b> (Pfeil) es im Satz genau dorthin. ' +
+				'eine Ebene höher. Stimmt seine <b>Zeit</b> (hör rein), rückt der runde Knopf <b>↓</b> darüber es im Satz genau dorthin. ' +
 				'Stimmt seine Zeit nicht, klick die Wörter neu ein.',
 			acts: [['resort', '⇄ Hier einsortieren', 1], ['retap', '▶ Neu einklicken'], ['skip', 'Überspringen'], hear],
 			point: () => tutCv(wordBtns.find(o => o.li === li)) || aBtn('resort')};
@@ -5565,6 +6036,7 @@ function setSimple(on, keep = true) {
 	document.body.classList.toggle('simple', on && !tut);
 	if (on) setTall(false, false);                 // the assistant points into the timeline
 	$('btnSimple').textContent = on ? '🛠 Profi-Modus' : '✨ Simple-Modus';
+	$('btnSimple').dataset.i = on ? '🛠' : '✨';
 	$('btnSimple').title = on ? 'Zurück ins volle Studio mit allen Werkzeugen' :
 		'Simple-Modus: ein schlankes Studio, Juicy führt dich Stelle für Stelle durch den Song';
 	if (on && $('sylMode').value !== 'off') { sylBefore = $('sylMode').value; $('sylMode').value = 'off'; $('sylMode').onchange(); }

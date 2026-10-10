@@ -58,17 +58,18 @@
 		<span><b class="grad">Juicy</b> LRC Studio</span>
 	</div>
 	<div class="group files">
-		<button id="btnFolder" title="Ordner mit Audio und LRC öffnen: zeigt, welches Audio zu welcher LRC gehört und wo noch eine fehlt">📁 Ordner</button>
-		<button id="btnAudio" title="Audio laden (mp3, wav, flac, m4a …) – bleibt lokal">♪ Audio</button>
-		<button id="btnOpen" title="LRC-Datei öffnen">LRC öffnen</button>
-		<button id="btnNew" title="Neue LRC aus eingefügtem Songtext">Neu aus Text</button>
+		<button id="btnFolder" data-i="📁" title="Ordner mit Audio und LRC öffnen: zeigt, welches Audio zu welcher LRC gehört und wo noch eine fehlt">📁 Ordner</button>
+		<button id="btnLastDir" data-i="↺" hidden>↺ Letzter Ordner</button>
+		<button id="btnAudio" data-i="♪" title="Audio laden (mp3, wav, flac, m4a …) – bleibt lokal">♪ Audio</button>
+		<button id="btnOpen" data-i="📂" title="LRC-Datei öffnen">LRC öffnen</button>
+		<button id="btnNew" data-i="📝" title="Neue LRC aus eingefügtem Songtext">Neu aus Text</button>
 		<span class="sep"></span>
-		<button id="btnSave" class="primary" title="Speichern (Strg+S)">Speichern</button>
-		<button id="btnSaveAs">Speichern unter</button>
-		<button id="btnDone" class="done" title="Fertig: trägt deinen Namen und „Fertig“ in die LRC ein und speichert – mit Party">🎉 Fertig</button>
-		<button id="btnReset" title="Auf den geladenen Stand zurück oder alle Wortzeiten löschen">Zurücksetzen</button>
+		<button id="btnSave" data-i="💾" class="primary" title="Speichern (Strg+S)">Speichern</button>
+		<button id="btnSaveAs" data-i="💾…" title="Speichern unter (Strg+Shift+S)">Speichern unter</button>
+		<button id="btnDone" data-i="🎉" class="done" title="Fertig: trägt deinen Namen und „Fertig“ in die LRC ein und speichert – mit Party">🎉 Fertig</button>
+		<button id="btnReset" data-i="⟲" title="Auf den geladenen Stand zurück oder alle Wortzeiten löschen">Zurücksetzen</button>
 		<span class="sep"></span>
-		<button id="btnSimple" type="button"></button>
+		<button id="btnSimple" data-i="✨" type="button"></button>
 		<button id="btnAsst" class="icon" type="button" title="Assistent an / aus: Juicy führt dich Stelle für Stelle durch den Song und zeigt mit dem roten Pfeil, was als Nächstes dran ist"><img src="assets/juicy.png" alt="Assistent"></button>
 		<input type="file" id="fileAudio" accept="audio/*,.mp3,.wav,.flac,.m4a,.aif,.aiff,.ogg" hidden>
 		<input type="file" id="fileLrc" accept=".lrc,.txt,text/plain" hidden>
@@ -82,9 +83,9 @@
 	</div>
 	<div class="bar">
 		<div id="checks" class="group checks">
-			<button id="fixSame" title="Wörter mit gleicher Zeit gleichmäßig bis zum nächsten Wort verteilen">Zeiten verteilen</button>
-			<button id="fixEnds" title="Fehlende Zeilenenden ungefähr setzen (danach nachhören!)">Enden schätzen</button>
-			<button id="btnRef" title="Original-Lyrics einfügen (z. B. von einer Lyrics-Seite): falsche, fehlende und überzählige Wörter werden markiert und lassen sich mit einem Klick beheben">Mit Original-Lyrics vergleichen</button>
+			<button id="fixSame" data-i="⇹" title="Wörter mit gleicher Zeit gleichmäßig bis zum nächsten Wort verteilen">Zeiten verteilen</button>
+			<button id="fixEnds" data-i="⏹?" title="Fehlende Zeilenenden ungefähr setzen (danach nachhören!)">Enden schätzen</button>
+			<button id="btnRef" data-i="📜" title="Original-Lyrics einfügen (z. B. von einer Lyrics-Seite): falsche, fehlende und überzählige Wörter werden markiert und lassen sich mit einem Klick beheben">Mit Original-Lyrics vergleichen</button>
 		</div>
 		<div class="group transport">
 			<button id="btnPlay" class="wide" title="Abspielen / Pause (Leertaste, P)">▶</button>
@@ -97,16 +98,18 @@
 				<button class="speed" data-rate="0.25">25 %</button>
 			</div>
 			<label title="Zeitleiste folgt der Wiedergabe"><input id="follow" type="checkbox" checked> Folgen</label>
+			<label title="Mitspringen: ein Wort anwählen holt die Zeitleiste zu ihm und setzt die Abspielmarke davor (Leertaste spielt dann dort). Aus: Zeitleiste und Abspielmarke bleiben, wo sie sind"><input id="jumpSel" type="checkbox" checked> Mitspringen</label>
 		</div>
 		<div class="group tools">
-			<button id="btnUndo" class="undo" title="Rückgängig (Strg+Z)">↶ Zurück</button>
-			<button id="btnRedo" class="undo" title="Wiederholen (Strg+Y)">↷ Vor</button>
+			<button id="btnUndo" data-i="↶" class="undo" title="Rückgängig (Strg+Z)">↶ Zurück</button>
+			<button id="btnRedo" data-i="↷" class="undo" title="Wiederholen (Strg+Y)">↷ Vor</button>
 			<button id="btnSettings" class="icon" popovertarget="settings" title="Einstellungen">⚙</button>
 			<button id="btnTut" class="icon" title="Tutorial: führt mit einem Beispielsong Schritt für Schritt durch alle Funktionen">🎓</button>
 			<button id="btnHelp" class="icon" title="Rundgang durch die Bereiche, Tasten und Hilfe – die Seitenleiste klappt dafür rechts nach oben, nochmal ? = zurück">?</button>
 		</div>
 	</div>
 	<div id="fileInfo"></div>
+	<button id="btnHead" class="icon" type="button" title="Kopfleiste einklappen: alles in einer schmalen Zeile, nur mit Symbolen">⌃</button>
 </header>
 
 <div id="settings" popover>
@@ -138,6 +141,7 @@
 		<label title="Schlägt vor, Wörter in Silben zu trennen (Lie|be), wenn sie lang genug gesungen werden. Erkennung nach Regeln für Deutsch und Englisch, ohne Wörterbuch – nur ein Vorschlag">Silben vorschlagen
 			<select id="sylMode"><option value="off">aus</option><option value="auto" selected>automatisch</option><option value="de">Deutsch</option><option value="en">Englisch</option></select></label>
 		<h4>Zeitleiste</h4>
+		<label title="Unter jedem Wort in der Zeitleiste seine Startzeit zeigen. Aus: nur beim markierten Wort"><input id="tlTimes" type="checkbox"> Zeiten aller Wörter</label>
 		<label title="Wie stark ein Schritt am Mausrad oder Touchpad zoomt. 100 % = großer Schritt (Mausrad), Standard 15 %">Zoom-Tempo
 			<span><input id="zoomSens" type="number" value="15" step="5" min="1" max="300"> %</span></label>
 		<h4>Studio</h4>
@@ -243,7 +247,7 @@
 					dann Speichern und am Schluss 🎉 Fertig. Mit einem Ordner kommen ◀ ▶ dazu, um durch die Songs zu blättern.</li>
 				<li data-area="#checks"><b>Prüf-Werkzeuge</b> (links neben ▶): gleiche Zeiten verteilen, fehlende Zeilenenden schätzen und
 					den Text mit den Original-Lyrics vergleichen und Fehler mit einem Klick beheben.</li>
-				<li data-area="header .transport"><b>Wiedergabe</b>: ▶ Play, ↻ Loop-Modus, Zeit, Tempo 100 – 25 % und <i>Folgen</i>.
+				<li data-area="header .transport"><b>Wiedergabe</b>: ▶ Play, ↻ Loop-Modus, Zeit, Tempo 100 – 25 %, <i>Folgen</i> und <i>Mitspringen</i>.
 					Rechts daneben ↶ ↷, ⚙ Einstellungen und diese Hilfe.</li>
 				<li data-area="#preview"><b>Vorschau</b>: die aktuelle und die nächste Zeile wie später im Player, gesungene Wörter färben sich.
 					Der Griff darunter macht sie größer oder kleiner; ganz klein bleibt nur die aktuelle Zeile.</li>
@@ -276,9 +280,9 @@
 				<tr><td>Leertaste</td><td>Abspielen / Pause. Ist eine Zeile offen (Bearbeiten oder Reparieren): Start / Stop der <b>Loop-Box</b>, die Wiedergabe bleibt in der Box</td></tr>
 				<tr><td>Loop-Box</td><td>beim Bearbeiten und Reparieren: von <i>Vorlauf</i> vor der Zeile bis zum Anfang der nächsten Zeile. Linke Kante ziehen = Vorlauf, rechte Kante = Ende</td></tr>
 				<tr><td>Silben</td><td>Knopf <i>Sil·ben</i> oben neben Reparieren schaltet die Vorschläge an / aus (beim Öffnen an, Sprache automatisch; fest Deutsch / Englisch unter Einstellungen → Prüfung → <i>Silben vorschlagen</i>): Wörter, die lang genug gesungen werden, aber noch nicht getrennt sind, zeigen orange Punkte an den Trennstellen (<i>Lie·be</i>) und links oben ein <b>✂</b>: ein Klick darauf trennt das ganze Wort. Fährst du über einen einzelnen Punkt, erscheint darunter ✂ – ein Klick trennt nur an dieser Stelle und teilt seine Zeit auf die Silben auf. Die Erkennung arbeitet nach Regeln, nicht mit einem Wörterbuch – also nur ein Vorschlag</td></tr>
-				<tr><td>× / + / ✓</td><td>in der Wortliste unten: <b>×</b> am Wort löscht es, <b>+</b> rechts daneben (beim Drüberfahren) fügt ein Wort danach ein, es bekommt gleich eine Zeit mitten zwischen seinen Nachbarn und steht so schon in der Zeitleiste, <b>✓</b> an einem fehlenden Zeilenende (<i>?</i> / <i>≈</i>) setzt das Ende so fest, wie es gerade ist. Nach dem Abgleich mit den Original-Lyrics steht über einem abweichenden Wort (beim Drüberfahren) der Vorschlag <b>↔ Wort</b>: ein Klick tauscht, danach steht dort <b>↶ altes Wort</b> und ein Klick tauscht zurück</td></tr>
-				<tr><td>Wort ziehen</td><td>in der Zeitleiste die Wort-Box (Balken unter dem Wort) anfassen = ganzes Wort verschieben. Nach rechts wird es kürzer, das nächste Wort bleibt stehen; nach links entsteht dahinter eine Pause. Schiebst du es über ein Nachbarwort hinaus, liegt es rot eine Ebene höher (mit seiner Länge), bis du es wieder an seinen Platz ziehst – so kannst du darunter erst die anderen richten. Stimmt dagegen seine Zeit und nur seine Stelle im Satz nicht, rückt <i>⇄ hier in den Satz einsortieren</i> darüber es im Text dorthin.
-						Steht dasselbe Wort zweimal fast genau übereinander (höchstens 0,1 s auseinander), macht <i>⇊ doppelt – fusionieren</i> eins daraus: Das obere wird gelöscht.
+				<tr><td>× / + / ✓</td><td>in der Wortliste unten: am <b>Satz</b> (beim Drüberfahren) fügt <b>+</b> am vorderen Rand einen Satz davor ein, <b>+</b> am hinteren Rand einen danach, <b>×</b> in der Ecke löscht ihn. Am Wort: <b>×</b> am Wort löscht es, <b>+</b> rechts daneben (beim Drüberfahren) fügt ein Wort danach ein, es bekommt gleich eine Zeit mitten zwischen seinen Nachbarn und steht so schon in der Zeitleiste, <b>✓</b> an einem fehlenden Zeilenende (<i>?</i> / <i>≈</i>) setzt das Ende so fest, wie es gerade ist. Nach dem Abgleich mit den Original-Lyrics steht über einem abweichenden Wort (beim Drüberfahren) der Vorschlag <b>↔ Wort</b>: ein Klick tauscht, danach steht dort <b>↶ altes Wort</b> und ein Klick tauscht zurück</td></tr>
+				<tr><td>Wort ziehen</td><td>in der Zeitleiste die Wort-Box (Balken unter dem Wort) anfassen = ganzes Wort verschieben. Nach rechts wird es kürzer, das nächste Wort bleibt stehen; nach links entsteht dahinter eine Pause. Schiebst du es über ein Nachbarwort hinaus, liegt es rot eine Ebene höher (mit seiner Länge), bis du es wieder an seinen Platz ziehst – so kannst du darunter erst die anderen richten. Stimmt dagegen seine Zeit und nur seine Stelle im Satz nicht, rückt der runde Knopf <i>↓</i> darüber (gestrichelte Linie in seine Zeile; Maus kurz drauf lassen = Text <i>Wort hier in den Satz einbetten</i>) es im Text dorthin.
+						Steht dasselbe Wort zweimal fast genau übereinander (höchstens 0,1 s auseinander), macht der runde Knopf <i>⇊</i> eins daraus: Das obere wird gelöscht.
 						Reicht ein Satzende unter den Anfang des nächsten Satzes (oder ein Wortende unter das nächste Wort), zeigt eine orange Linie, wo es enden sollte – <i>✂ Ende kürzen</i> setzt es dorthin. Das Zeilenende bleibt immer hinter dem letzten Wort, der Zeilenanfang klebt am ersten Wort.
 					Wörter mit derselben Zeit (rot) liegen gestapelt über der Box, mit ihrem Text, und lassen sich einzeln anfassen. Der Knopf <i>⇔ n Wörter auffächern</i> über dem Stapel (oder Doppelklick auf den Stapel) = auffächern: jedes Wort bekommt eine Länge nach seinem Text (auch über Zeilen hinweg), der Rest der Zeile und ihr Ende rücken mit, alles bleibt in einer Reihe. Läuft die Zeile dann in die nächste hinein, liegt sie rot leuchtend eine Ebene höher, bis du Platz machst. Ein sehr hoher Stapel wird zusammengedrückt, damit er auf den Schirm passt. Linke oder rechte Kante ziehen = Wort nach links / rechts länger oder kürzer. Dabei spielt der Anfang des Wortes kurz an (wie Rechtsklick), sobald die Maus kurz still steht, und wiederholt das, solange du die Maustaste hältst, immer von der neuen Stelle aus. Gilt sofort, ohne OK</td></tr>
 				<tr><td>Zeile ziehen</td><td>die Zeilen-Box ganz unten anfassen und nach links / rechts ziehen = die ganze Zeile mit allen Wörtern verschieben. Dabei spielt ihr Anfang kurz an, immer wieder, solange du die Maustaste hältst. Gilt sofort, ohne OK. Klick ohne Ziehen = Zeile markieren. Überlappt eine Zeile eine andere (auch weil du sie darüber geschoben hast), liegt sie samt ihren Wörtern rot leuchtend eine Ebene höher: unten Zeile und Wörter, darüber die andere Zeile und ihre Wörter. Sobald wieder Platz ist, rutscht sie nach unten. Schiebst du eine Zeile ganz an einer anderen vorbei, rückt sie im Text an die richtige Stelle. Steht eine Zeile trotzdem an der falschen Stelle (z. B. so geladen), zeigt ein oranges Schild unter ihr mit Pfeil, nach welcher Zeile sie steht; ein Klick darauf sortiert alle Zeilen nach Zeit</td></tr>
@@ -286,7 +290,7 @@
 				<tr><td>Strg+Klick</td><td>beim Bearbeiten: in der Zeitleiste nur dorthin springen, statt zu setzen</td></tr>
 				<tr><td>↻ (neben ▶)</td><td>Loop-Modus, an = die markierte Zeile läuft immer im Loop; wählst du eine andere Zeile, loopt sofort die. Aus = der ganze Track läuft durch</td></tr>
 				<tr><td>L</td><td>markierte Zeile im Loop abspielen, mit Vor- und Nachlauf (oben <i>Loop ±</i>). Läuft auch von selbst, sobald du das Zeilenende gesetzt hast</td></tr>
-				<tr><td>X / ✂</td><td>Klinge an / aus (wie im Schnittprogramm): Klick in die Zeitleiste teilt die Zeile dort in zwei Boxen. Liegt der Schnitt in einem Wort, endet die linke Zeile am Schnitt und die rechte beginnt mit dem nächsten Wort. Esc = Klinge aus, Strg+Z = zurück</td></tr>
+				<tr><td>X / ✂</td><td>Klinge an / aus (wie im Schnittprogramm): <b>oben</b> über einem Wort zeigen kleine Striche seine Silben, die Klinge springt an die nächste (Vorschau <i>Son | nenschein</i>) – ein Klick trennt das Wort dort, seine Länge wird im Verhältnis der Silben aufgeteilt. <b>Unten</b> in der Zeilen-Box teilt ein Klick die Zeile dort in zwei Boxen. Liegt der Schnitt in einem Wort, endet die linke Zeile am Schnitt und die rechte beginnt mit dem nächsten Wort. Esc = Klinge aus, Strg+Z = zurück</td></tr>
 				<tr><td>Original</td><td><i>Mit Original-Lyrics vergleichen</i> (oben links neben ▶): Original-Lyrics einfügen. Falsche, fehlende und überzählige Wörter werden unterstrichen und rechts mit Vorschlag gelistet (Tauschen / Einfügen / Löschen). <code>[Chorus]</code> usw. zählen nicht, Wörter in <code>( )</code> sind optional, Wiederholungen und Remix-Schnitte sind kein Fehler</td></tr>
 				<tr><td>N / Shift+N</td><td>nächste / vorige Zeile mit Fehlern oder ungesetzten Wörtern: ihr erstes Problem wird markiert</td></tr>
 				<tr><td>T</td><td><i>Leertaste tippt</i> an / aus. An: läuft das Lied, setzt die Leertaste das markierte Wort. Beim letzten Wort einer Zeile <b>gedrückt halten</b>, bis es zu Ende gesungen ist: Loslassen setzt das Zeilenende. Nicht bei offener Zeile</td></tr>
@@ -302,9 +306,13 @@
 				<tr><td>Entf / ⌫</td><td>gewählte Zeilen oder das markierte Wort löschen (beim Setzen und in einer offenen Zeile: markierte Zeit löschen)</td></tr>
 				<tr><td>F2 / Doppelklick</td><td>Wort bearbeiten. <code>|</code> trennt Silben (<code>Hel|lo</code>), Leerzeichen trennt Wörter, leer = löschen</td></tr>
 				<tr><td>V</td><td>Stimme der ausgewählten Zeilen: v1, v2 … (eLRC) oder M, F, D (Mann, Frau, Duett), bg = Hintergrund. Ohne Tag gilt die Stimme der Zeile darüber. Hintergrund-Zeilen werden beim normalen Tippen übersprungen, setze sie mit Reparieren</td></tr>
-				<tr><td>Auswählen</td><td>Shift+Klick = Bereich, Strg+Klick = einzeln, Strg+A = alle Zeilen, oder <i>☑ Auswählen</i> und Zeilen anklicken (auch ihre Box in der Zeitleiste). <b>Strg+C</b> / <i>⧉ Kopieren</i> kopiert sie mit allen Zeiten, <b>Strg+V</b> / <i>📋 Einfügen</i> setzt sie an der Abspielmarke wieder ein</td></tr>
+				<tr><td>Auswählen</td><td>an der Zeilennummer: Shift+Klick = Bereich, Strg+Klick = einzeln, Strg+A = alle Zeilen, oder <i>☑ Auswählen</i> und Zeilen anklicken (auch ihre Box in der Zeitleiste). <b>Strg+C</b> / <i>⧉ Kopieren</i> kopiert sie mit allen Zeiten, <b>Strg+V</b> / <i>📋 Einfügen</i> setzt sie an der Abspielmarke wieder ein</td></tr>
 				<tr><td>Zeilen zusammen</td><td>Mehrere Zeilen gewählt (Shift / Strg+Klick, Strg+A): eine ihrer Boxen in der Zeitleiste ziehen verschiebt alle gewählten</td></tr>
 				<tr><td>Box aufziehen</td><td>In der Zeitleiste neben den Zeilenboxen drücken und ziehen: alle Wörter in der Box sind gewählt (Shift / Strg = dazu). Eins davon ziehen verschiebt alle, <b>Strg+C</b> kopiert, <b>Entf</b> löscht, <b>Esc</b> wählt ab</td></tr>
+				<tr><td>⌃ / ⌄</td><td>oben rechts: die Kopfleiste einklappen – alles in einer schmalen Zeile, nur Symbole (Text steht im Tooltip) – und wieder ausklappen</td></tr>
+				<tr><td>Doppelklick</td><td>auf eine freie Stelle der Waveform: dort einen Satz eintippen (wie ein Kommentar auf SoundCloud), Enter, dann ans Satzende klicken – die Wörter teilen sich die Zeit nach ihrer Länge und lassen sich als Boxen an den Kanten länger / kürzer und in der Mitte verschieben. Esc = verwerfen</td></tr>
+				<tr><td>Ansicht schieben</td><td>freie Stelle der Waveform anfassen und ziehen, mit der <b>mittleren Maustaste</b> überall, Touchpad seitlich wischen oder Shift+Mausrad. Mausrad = Zoom (Tempo unter ⚙)</td></tr>
+				<tr><td>Wörter wählen</td><td>in der Wortliste: <b>Strg+Klick</b> = Wort dazu / weg, <b>Shift+Klick</b> = alle Wörter bis dahin, oder neben den Wörtern drücken und eine Box aufziehen. Eins davon in eine Zeile ziehen schiebt alle dorthin (in ihrer Reihenfolge, mit ihren Zeiten); Strg+C, Entf und Esc wie bei der Box in der Zeitleiste. Zeilen wählst du an der Zeilennummer</td></tr>
 				<tr><td>Wort ziehen</td><td>Ein Wort in der Wortliste mit der Maus in eine andere Zeile ziehen: vor / hinter ein Wort oder ans Zeilenende – es kommt mit seiner Zeit dorthin</td></tr>
 				<tr><td>≈</td><td>An der Zeilennummer: nur diese Zeile und die ähnlichen bleiben in der Liste, untereinander mit % – zum Vergleichen und Verlinken. Gleiche Sätze ohne Zeiten werden dabei gleich verlinkt und ab ihrem Start aufgefächert. Esc = alle Zeilen</td></tr>
 				<tr><td>🔍</td><td><i>Ähnlich &amp; Satzbau</i>: findet Sätze, die sich wiederholen (Text und Timing in %), zum Verlinken – und Sätze, die an der falschen Stelle getrennt sind (Groß-/Kleinschreibung, Pausen); ein Klick schiebt das Wort in die richtige Zeile</td></tr>
