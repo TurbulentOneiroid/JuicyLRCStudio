@@ -4106,6 +4106,41 @@ function setSlimHead(on, keep = true) {
 }
 $('btnHead').onclick = () => setSlimHead(!document.body.classList.contains('slimhead'));
 try { setSlimHead(localStorage.getItem('lrcEditorSlimHead') === '1', false); } catch (e) { setSlimHead(false, false); }
+
+// folded header: the symbol under the mouse grows and a card under it shows the button as it is when unfolded
+// (symbol and word) with what it does; the browser's own tooltip waits meanwhile
+let headTipEl = null;
+function headTip(b) {
+	if (headTipEl) {
+		const o = headTipEl.owner;
+		if (o === b) return;
+		if (o.dataset.t != null) { o.title = o.dataset.t; delete o.dataset.t; }
+		headTipEl.remove();
+		headTipEl = null;
+	}
+	if (!b) return;
+	const tip = b.title || (b.querySelector('[title]') || {}).title || '';
+	let name = b.dataset.i != null || b.tagName === 'LABEL' ? b.textContent.trim().replace(/\s+/g, ' ') : '';
+	const sym = b.textContent.trim();
+	if (!name) name = ((sym && sym.length <= 2 ? sym + ' ' : '') + tip.split(/[:(–]/)[0].trim()).trim();
+	if (!name && !tip) return;
+	if (b.dataset.i && !name.startsWith(b.dataset.i)) name = b.dataset.i + ' ' + name;
+	if (b.title) { b.dataset.t = b.title; b.title = ''; }
+	const el = headTipEl = document.createElement('div');
+	el.className = 'headTip';
+	el.owner = b;
+	el.innerHTML = '<b>' + esc(name) + '</b>' + (tip && tip.trim() !== name ? '<span>' + esc(tip) + '</span>' : '');
+	document.body.appendChild(el);
+	const r = b.getBoundingClientRect(), w = el.offsetWidth;
+	el.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+	el.style.top = (r.bottom + 6) + 'px';
+}
+document.querySelector('header').addEventListener('mouseover', e => {
+	const b = document.body.classList.contains('slimhead') && e.target.closest('header button, header label, header select');
+	headTip(b && b.id !== 'btnHead' ? b : null);
+});
+document.querySelector('header').addEventListener('mouseleave', () => headTip(null));
+document.querySelector('header').addEventListener('click', () => headTip(null));
 try { setTall(localStorage.getItem('lrcEditorTall') === '1', false); } catch (e) { setTall(false, false); }
 $('btnCopy').onclick = () => {
 	const text = copyLines();
