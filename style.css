@@ -457,8 +457,8 @@ body.editing .line:not(.editing) { opacity: 0.32; }
 	cursor: pointer;
 	z-index: 2;
 }
-.tx { top: -6px; right: -6px; background: var(--panel-solid); color: var(--dim); border: 1px solid var(--line-hi); opacity: 0.45; }
-.tok:hover .tx { opacity: 1; }
+.tx { top: -6px; right: -6px; background: var(--panel-solid); color: var(--dim); border: 1px solid var(--line-hi); opacity: 0; transition: opacity 0.12s; }
+.tok:hover .tx, .tok.sel .tx { opacity: 1; }
 .tx:hover { background: var(--err); color: var(--ink); border-color: transparent; }
 .tadd { top: 50%; right: -12px; transform: translateY(-50%); background: var(--ok); color: var(--ink); visibility: hidden; }
 .tok:hover .tadd { visibility: visible; }
@@ -986,6 +986,7 @@ body.drop::after {
 .tok.aword { border-color: var(--accent); }
 .tok.aword .tsug { visibility: visible; }
 .tok.ademo .tadd { visibility: visible; }
+.tok.ademo .tx { opacity: 1; }
 body.simple .tok.ademo .tx, body.simple .tok.ademo .tadd { display: grid !important; opacity: 1; }
 button.undo { padding: 0 9px; font-size: 13px; }
 
@@ -1017,3 +1018,44 @@ body.simple .ln .lk { display: none; }
 
 /* words chosen with the box in the timeline */
 .tok.wpick { outline: 2px dashed var(--cursor); outline-offset: 1px; }
+
+/* ⤒ word list folded up: lyrics display, timeline and draft bar make room */
+body.tall #preview, body.tall #splitPv, body.tall #legend, body.tall #overview, body.tall #timeline, body.tall #draft { display: none; }
+body.tall #stage { padding-top: 6px; }
+#btnTall { font-weight: 600; }
+body.tall #btnTall { background: var(--cursor); color: var(--ink); border-color: transparent; }
+body.simple #btnTall { display: none; }
+
+/* 🔍 similar sentences and sentence building */
+#dlgSim { width: min(860px, 94vw); }
+#simList { max-height: 60vh; overflow: auto; padding-right: 4px; }
+#simList h4 { margin: 14px 0 6px; color: var(--text-hi); }
+#simList .dim { color: var(--dim); font-weight: 400; }
+.simrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 7px 8px; border-radius: 10px; border: 1px solid var(--line); margin-bottom: 6px; }
+.simrow .simtx { flex: 1 1 240px; min-width: 0; font-size: 13px; line-height: 1.45; }
+.simrow .pct { min-width: 50px; text-align: right; font: 600 13px var(--mono); color: var(--warn); }
+.simrow .pct.hi { color: var(--ok); }
+.simrow button { white-space: nowrap; }
+body.simple #btnSim { display: none; }
+
+/* ≈ compare view: only alike lines in the word list */
+.line.cmp-hide { display: none; }
+#cmpBar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; margin-bottom: 8px; border-radius: 12px;
+	border: 1px solid var(--cursor); background: color-mix(in srgb, var(--cursor) 10%, transparent); font-size: 13px; }
+#cmpBar[hidden] { display: none; }
+#cmpBar .dim { color: var(--dim); flex: 1 1 260px; }
+#cmpBar .ok { color: var(--ok); }
+.ln .lk.cmpb { --lc: var(--cursor); opacity: 0.7; }
+.ln .lk.cmpb:hover { opacity: 1; }
+.cmpp { margin-top: 4px; font: 600 12px var(--mono); color: var(--cursor); }
+.cmpp button { height: 18px; padding: 0 5px; font-size: 11px; }
+.cmpp.anchor { color: var(--ok); }
+body.simple .ln .lk.cmpb { display: none; }
+/* a word dragged to another line */
+.wghost { position: fixed; z-index: 95; pointer-events: none; padding: 3px 10px; border-radius: 8px; background: var(--cursor); color: var(--ink);
+	font-weight: 600; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+body.wdrag, body.wdrag * { cursor: grabbing !important; user-select: none; }
+.tok.wdragging { opacity: 0.35; }
+.tok.drop-b { box-shadow: -3px 0 0 var(--cursor); }
+.tok.drop-a { box-shadow: 3px 0 0 var(--cursor); }
+.line.drop-end { outline: 2px dashed var(--cursor); outline-offset: -2px; }

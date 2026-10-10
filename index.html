@@ -180,6 +180,7 @@
 		<div class="tabs">
 			<button class="tab active" data-tab="words">Wörter</button>
 			<button class="tab" data-tab="raw">Text (LRC)</button>
+			<button id="btnTall"></button>
 			<button id="btnLoop" title="Markierte Zeile im Loop abspielen, mit kurzem Vor- und Nachlauf (L)">↻ Zeile loopen</button>
 			<button id="btnNext" title="Zur nächsten Zeile mit Fehlern oder ungesetzten Wörtern (N, Shift+N zurück)">Nächster Fehler ⏭</button>
 			<button id="btnVoice" title="Stimme der ausgewählten Zeilen setzen (V): v1, v2 … / M, F, D / bg = Hintergrund">Stimme</button>
@@ -189,10 +190,12 @@
 			<button id="btnCopy" title="Ausgewählte Zeilen kopieren (Strg+C) – mit allen Zeiten">⧉ Kopieren</button>
 			<button id="btnPaste" title="Kopierte Zeilen einfügen (Strg+V): sie beginnen an der Abspielmarke">📋 Einfügen</button>
 			<button id="btnLink" title="Gleiche Sätze verlinken: sie verhalten sich über den ganzen Track gleich">🔗 Verlinken</button>
+			<button id="btnSim" title="Ähnliche Sätze finden (Text und Timing, in %) und verlinken – und Sätze, die an der falschen Stelle getrennt sind">🔍 Ähnlich &amp; Satzbau</button>
 			<button id="btnRepair" title="Ausgewählte Zeilen neu tippen (R). Zeilen auswählen: Zeilennummer anklicken, Shift = Bereich, Strg = einzeln dazu">Reparieren</button>
 			<button id="btnSyl" class="on" title="Silben-Vorschläge an / aus: orange Punkte zeigen, wo ein lang gesungenes Wort in Silben getrennt werden könnte (Sprache in den Einstellungen, sonst automatisch)">Sil·ben</button>
 			<span id="hint"></span>
 		</div>
+		<div id="cmpBar" hidden></div>
 		<div id="words"></div>
 		<div id="raw" hidden>
 			<textarea id="rawText" spellcheck="false"></textarea>
@@ -300,7 +303,11 @@
 				<tr><td>F2 / Doppelklick</td><td>Wort bearbeiten. <code>|</code> trennt Silben (<code>Hel|lo</code>), Leerzeichen trennt Wörter, leer = löschen</td></tr>
 				<tr><td>V</td><td>Stimme der ausgewählten Zeilen: v1, v2 … (eLRC) oder M, F, D (Mann, Frau, Duett), bg = Hintergrund. Ohne Tag gilt die Stimme der Zeile darüber. Hintergrund-Zeilen werden beim normalen Tippen übersprungen, setze sie mit Reparieren</td></tr>
 				<tr><td>Auswählen</td><td>Shift+Klick = Bereich, Strg+Klick = einzeln, Strg+A = alle Zeilen, oder <i>☑ Auswählen</i> und Zeilen anklicken (auch ihre Box in der Zeitleiste). <b>Strg+C</b> / <i>⧉ Kopieren</i> kopiert sie mit allen Zeiten, <b>Strg+V</b> / <i>📋 Einfügen</i> setzt sie an der Abspielmarke wieder ein</td></tr>
+				<tr><td>Zeilen zusammen</td><td>Mehrere Zeilen gewählt (Shift / Strg+Klick, Strg+A): eine ihrer Boxen in der Zeitleiste ziehen verschiebt alle gewählten</td></tr>
 				<tr><td>Box aufziehen</td><td>In der Zeitleiste neben den Zeilenboxen drücken und ziehen: alle Wörter in der Box sind gewählt (Shift / Strg = dazu). Eins davon ziehen verschiebt alle, <b>Strg+C</b> kopiert, <b>Entf</b> löscht, <b>Esc</b> wählt ab</td></tr>
+				<tr><td>Wort ziehen</td><td>Ein Wort in der Wortliste mit der Maus in eine andere Zeile ziehen: vor / hinter ein Wort oder ans Zeilenende – es kommt mit seiner Zeit dorthin</td></tr>
+				<tr><td>≈</td><td>An der Zeilennummer: nur diese Zeile und die ähnlichen bleiben in der Liste, untereinander mit % – zum Vergleichen und Verlinken. Gleiche Sätze ohne Zeiten werden dabei gleich verlinkt und ab ihrem Start aufgefächert. Esc = alle Zeilen</td></tr>
+				<tr><td>🔍</td><td><i>Ähnlich &amp; Satzbau</i>: findet Sätze, die sich wiederholen (Text und Timing in %), zum Verlinken – und Sätze, die an der falschen Stelle getrennt sind (Groß-/Kleinschreibung, Pausen); ein Klick schiebt das Wort in die richtige Zeile</td></tr>
 				<tr><td>🔗</td><td>Gleiche Sätze verlinken: 🔗 an der Zeilennummer verlinkt einen Satz mit allen gleichen. Verlinkte Sätze (gleiche Farbe) verhalten sich überall gleich – was du in einem änderst oder verschiebst, passiert in allen. <b>+</b> neben dem 🔗 macht aus dem Satz eine neue Version (eigene Farbe), gleiche Sätze verlinken sich dann mit der nächsten Version davor. Mit Strg+Klick gewählte Zeilen und <i>🔗 Verlinken</i> kommen in die Gruppe der schon verlinkten unter ihnen. <i>⛓ Lösen</i> hebt es auf</td></tr>
 				<tr><td>1 / 2 / 3 / 4</td><td>Tempo 100 / 75 / 50 / 25 %</td></tr>
 				<tr><td>Strg+Z / Strg+Y</td><td>Rückgängig / Wiederholen</td></tr>
@@ -391,6 +398,16 @@
 	</form>
 </dialog>
 
+<dialog id="dlgSim">
+	<form method="dialog">
+		<h3>🔍 Ähnliche Sätze &amp; Satzbau</h3>
+		<p>Jeder Satz wird mit den Sätzen davor verglichen: nach seinen Wörtern und – wo beide gesetzt sind – nach seinem Timing.
+			Ähnliche lassen sich verlinken (🔗). Darüber: Sätze, die wohl an der falschen Stelle getrennt sind – ein Wort am Zeilenende, das
+			eigentlich den nächsten Satz beginnt (oft groß geschrieben), oder eins am Zeilenanfang, das den Satz davor beendet (oft klein geschrieben).</p>
+		<div id="simList"></div>
+		<div class="row end"><button value="close">Fertig</button></div>
+	</form>
+</dialog>
 <dialog id="dlgReset">
 	<form method="dialog">
 		<h3>Zurücksetzen</h3>

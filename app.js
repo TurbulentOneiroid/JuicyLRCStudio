@@ -26,6 +26,9 @@ let picked = new Set(), pickAnchor = null;    // lines chosen (repair, copy, lin
 let delTarget = 'word';         // what Entf / Backspace deletes outside tapping: 'word' (the marked one) or 'lines' (the chosen ones)
 let wpick = new Set();          // words chosen with the box in the timeline ('li:ti'): dragged, copied, deleted together
 let band = null;                // that box while it is drawn {x0, y0, x1, y1}
+let cmp = null;                 // ≈ compare view in the word list: {ln} = the line the others are compared with
+let simMemo = {key: '', map: new Map()};   // similar lines, kept until the next change (see simOf)
+const SIM_MIN = 0.6;            // from here two lines count as alike
 let pickMode = false;           // ☑ Auswählen on: a click on a line adds it to the chosen ones (or takes it out)
 let clip = null;                // lines copied with Strg+C / Kopieren: {json, text}
 let linkPat = new Map();        // linked lines: group id -> their shared pattern (words, times from the line's base), see linkSync
@@ -943,6 +946,8 @@ function pickLine(li, e) {
 
 function renderPicked() {
 	renderWpick();
+	$('words').querySelectorAll('.cmpp').forEach(x => x.remove());
+	renderCmp();
 	lineEls.forEach((el, i) => {
 		if (!el) return;
 		el.classList.toggle('picked', picked.has(i));
@@ -1283,6 +1288,9 @@ function renderWords() {
 			'<button class="lk plus" data-act="version" style="--lc:' + linkColor(ln.link.id) + '" title="Neue Version dieses Satzes: ' +
 			'er verlässt die Gruppe und bekommt eine eigene Farbe – gleiche Sätze lassen sich dann mit ihr verlinken">+</button>' :
 			tw >= 0 ? '<button class="lk twin" data-act="link" title="Gleicher Satz wie Zeile ' + (tw + 1) + ' – Klick: mit ihm verlinken">🔗</button>' : '';
+		const sc = !ln.brk && !simple ? (simOf().get(li) || []).length : 0;
+		const cb = sc ? '<button class="lk cmpb" data-act="cmp" title="Mit ' + sc + (sc === 1 ? ' ähnlichem Satz' : ' ähnlichen Sätzen') +
+			' vergleichen: nur sie bleiben in der Liste, untereinander, mit % und Verlinken">≈' + sc + '</button>' : '';
 		const tools = '<span class="tools">' + (ln.brk ? '' : '<button data-act="edit" title="Zeile bearbeiten">✎</button>') +
 			'<button data-act="add" title="Zeile darunter einfügen">＋</button>' +
 			'<button data-act="del" title="Zeile löschen">✕</button></span>';
@@ -1292,7 +1300,7 @@ function renderWords() {
 			? '<span class="vb v' + vg + (vi.own ? '' : ' inh') + '" title="Stimme' + (vi.own ? '' : ' (von oben übernommen)') +
 			'">' + esc(vi.voice) + '</span>' : '';
 		html.push('<div class="line' + (ln.brk ? ' brk' : '') + (vi.bg ? ' bgline' : '') + (vg && !ln.brk ? ' voice' + vg : '') + (ln.link ? ' linked' : '') +
-			'" data-li="' + li + '"' + (ln.link ? ' style="--lc:' + linkColor(ln.link.id) + '"' : '') + '><div class="ln">' + (li + 1) + ' ' + badge + ' ' + lk + ' ' + tools + '<br>' +
+			'" data-li="' + li + '"' + (ln.link ? ' style="--lc:' + linkColor(ln.link.id) + '"' : '') + '><div class="ln">' + (li + 1) + ' ' + badge + ' ' + lk + cb + ' ' + tools + '<br>' +
 			(t0 != null ? LRC.fmt(t0) : '–') + '</div><div class="toks">');
 		if (ln.brk) {
 			html.push('— Pause / Zeilenende ' + (t0 != null ? LRC.fmt(t0) : '') + ' —');
@@ -2101,7 +2109,7 @@ function frame() {
 function typing(e) {
 	const t = e.target;
 	return t.tagName === 'TEXTAREA' || (t.tagName === 'INPUT' && t.type !== 'checkbox') || $('dlgNew').open || $('dlgReset').open ||
-		$('dlgFolder').open || $('dlgRef').open || $('dlgSave').open || $('dlgName').open;
+		$('dlgFolder').open || $('dlgRef').open || $('dlgSim').open || $('dlgSave').open || $('dlgName').open;
 }
 
 // times of the marked word change only inside edit mode (or while repairing / tapping)
@@ -2125,6 +2133,7 @@ window.addEventListener('keydown', e => {
 	else if (k === 'Backspace') backTap();
 	else if (low === 'e') { if (edit || tapMode()) endNow(); else canTime(); }
 	else if (low === 'p') setPauser(!pauser);
+	else if (k === 'Escape' && cmp) closeCmp();
 	else if (k === 'Escape' && wpick.size) { wpick = new Set(); renderWpick(); hint('Wörter abgewählt.'); }
 	else if (k === 'Escape' && pickMode) setPickMode(false);
 	else if (k === 'Escape' && blade) setBlade(false);
@@ -2285,7 +2294,7 @@ $('words').addEventListener('click', e => {
 	if (btn) {
 		const li = +btn.closest('.line').dataset.li;
 		if (edit && !(btn.dataset.act === 'edit' && li === edit.li)) { lockedHint(); return; }
-		({edit: editLine, add: addLine, del: delLine, link: linkToggle, version: linkVersion})[btn.dataset.act](li);
+		({edit: editLine, add: addLine, del: delLine, link: linkToggle, version: linkVersion, cmp: openCmp})[btn.dataset.act](li);
 		return;
 	}
 	if ((e.shiftKey || e.ctrlKey || e.metaKey || pickMode) && e.target.closest('.line')) {
@@ -2412,9 +2421,12 @@ function moveWord(h, dt) {
 
 // a line box dragged sideways: all its times move together; pushed over the lines before or after it, it lies a
 // level up (see overlapLines) until there is room. It loops meanwhile so you hear where it sits. A click without moving marks the line (its first problem) as before.
+// Several lines chosen (Shift / Strg+Klick, Strg+A) and one of them dragged: they all move together.
 function dragLine(li, x0) {
-	const ln = doc.lines[li], o = JSON.parse(JSON.stringify(ln)), W = tl.clientWidth;
-	const times = [o.t, ...o.tokens.flatMap(k => [k.t, k.end])].filter(t => t != null);
+	const ln = doc.lines[li], W = tl.clientWidth;
+	const group = (!edit && picked.size > 1 && picked.has(li) ? [...picked] : [li]).map(j => doc.lines[j]).filter(x => x && !x.brk);
+	const os = group.map(x => JSON.parse(JSON.stringify(x)));
+	const times = os.flatMap(o => [o.t, ...o.tokens.flatMap(k => [k.t, k.end])]).filter(t => t != null);
 	let lo = times.length ? -Math.min(...times) : 0, hi = Infinity;
 	liftLine = ln;
 	const z0 = edit && edit.zone ? {...edit.zone} : null;
@@ -2431,8 +2443,11 @@ function dragLine(li, x0) {
 		}
 		const dt = LRC.q(Math.max(lo, Math.min(hi, (xx - x0) / W * view.span)));
 		const sh = t => t == null ? t : LRC.q(t + dt);
-		if (o.t != null) ln.t = sh(o.t);
-		ln.tokens.forEach((k, i) => { k.t = sh(o.tokens[i].t); k.end = sh(o.tokens[i].end); });
+		group.forEach((g, n) => {
+			const o = os[n];
+			if (o.t != null) g.t = sh(o.t);
+			g.tokens.forEach((k, i) => { k.t = sh(o.tokens[i].t); k.end = sh(o.tokens[i].end); });
+		});
 		if (z0) Object.assign(edit.zone, {a: Math.max(0, z0.a + dt), b: z0.b + dt, a0: z0.a0 + dt});
 		recalc();
 		dragSnip(LRC.lineTime(ln));
@@ -3094,6 +3109,535 @@ function drawWpick() {
 }
 
 
+// ---------------------------------------------------------------- similar sentences and how the sentences are built
+// 🔍 Ähnlich & Satzbau: every sentence is compared with the ones before it - by its words (in order) and, where both
+// are set, by its rhythm (the times of the words from the first one they share). The best match per sentence is shown
+// with a % and can be linked. Besides that it looks for sentences cut in the wrong place: a word at the end of a line
+// that starts the next sentence (capital letter, a pause before it, close to the next line) or a word at the start of
+// a line that ends the sentence before (small letter, close to the line before, a pause after it).
+
+function wnorm(s) { return s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, ''); }
+
+// the words of a line, syllables joined: [{w, text, t, end, a, b}] (a..b = its tokens)
+function lineWords(ln) {
+	const out = [];
+	ln.tokens.forEach((k, i) => {
+		const o = out[out.length - 1];
+		if (k.glue && o) { o.text += k.text; o.w = wnorm(o.text); o.b = i; o.end = k.end; return; }
+		out.push({text: k.text, w: wnorm(k.text), t: k.t, end: k.end, a: i, b: i});
+	});
+	return out.filter(o => o.w || o.text.trim());
+}
+
+// pairs [i, j] of the words both lines share, in order (longest common run)
+function wordMatch(a, b) {
+	const d = Array.from({length: a.length + 1}, () => new Array(b.length + 1).fill(0));
+	for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+		d[i][j] = a[i].w === b[j].w ? d[i + 1][j + 1] + 1 : Math.max(d[i + 1][j], d[i][j + 1]);
+	const out = [];
+	for (let i = 0, j = 0; i < a.length && j < b.length;) {
+		if (a[i].w === b[j].w) { out.push([i, j]); i++; j++; } else if (d[i + 1][j] >= d[i][j + 1]) i++; else j++;
+	}
+	return out;
+}
+
+// -> {text, rhythm (null = not both set), score} as 0..1
+function lineSim(A, B) {
+	const a = lineWords(A), b = lineWords(B);
+	if (!a.length || !b.length) return null;
+	const m = wordMatch(a, b), lo = Math.min(a.length, b.length), hi = Math.max(a.length, b.length);
+	let text = 2 * m.length / (a.length + b.length);
+	if (lo >= 3 && hi <= lo * 1.7) text = Math.max(text, 0.9 * m.length / lo);      // its end missing: what is there still counts
+	const tm = m.filter(([i, j]) => a[i].t != null && b[j].t != null);
+	let rhythm = null;
+	if (tm.length >= 2) {
+		const [i0, j0] = tm[0];
+		const diff = tm.reduce((s, [i, j]) => s + Math.abs((a[i].t - a[i0].t) - (b[j].t - b[j0].t)), 0) / tm.length;
+		rhythm = Math.max(0, 1 - diff / 0.5);
+	}
+	return {text, rhythm, score: rhythm == null ? text : 0.75 * text + 0.25 * rhythm};
+}
+
+// every sentence with its best match before it: [{li, to, sim}], best first
+function similarLines() {
+	const out = [];
+	doc.lines.forEach((B, j) => {
+		if (B.brk || lineWords(B).length < 2) return;
+		let best = null;
+		for (let i = 0; i < j; i++) {
+			const A = doc.lines[i];
+			if (A.brk || lineWords(A).length < 2) continue;
+			if (A.link && B.link && A.link.id === B.link.id) { best = null; break; }      // linked already
+			const s = lineSim(A, B);
+			if (s && s.text >= 0.5 && s.score >= SIM_MIN && (!best || s.score > best.sim.score + 0.001)) best = {li: j, to: i, sim: s};
+		}
+		if (best) out.push(best);
+	});
+	return out.sort((x, y) => y.sim.score - x.sim.score || x.li - y.li);
+}
+
+// sentences cut in the wrong place -> [{li, dir, word, pct, why}]: dir +1 = the last word of line li goes to the start
+// of the next line, -1 = the first word of line li goes to the end of the line before
+let buildMemo = {key: '', out: []};
+function buildIssues() {
+	const key = version + ':' + doc.lines.length + ':' + undoStack.length + ':' + (refLines ? refLines.length : 0);
+	if (buildMemo.key !== key) buildMemo = {key, out: buildIssuesNow()};
+	return buildMemo.out.map(o => Object.assign({}, o));
+}
+
+function buildIssuesNow() {
+	const pre = [...refBuildIssues(), ...repeatIssues()];
+	const own = buildIssuesOwn().filter(o => !pre.some(p => p.li === o.li || (o.dir > 0 && p.li === o.li + 1) || (o.dir < 0 && p.li === o.li - 1)));
+	return [...pre.filter((p, i) => !pre.slice(0, i).some(q => q.li === p.li && q.kind === p.kind && q.dir === p.dir)), ...own]
+		.sort((x, y) => y.pct - x.pct || x.li - y.li);
+}
+
+function buildIssuesOwn() {
+	const main = doc.lines.map((ln, li) => ({ln, li})).filter(o => !o.ln.brk && !LRC.isBg(o.ln) && lineWords(o.ln).length);
+	const firsts = main.map(o => lineWords(o.ln)[0].text.replace(/^[^\p{L}]+/u, '')).filter(s => /^\p{L}/u.test(s));
+	const capStyle = firsts.length >= 3 && firsts.filter(s => /^\p{Lu}/u.test(s)).length / firsts.length >= 0.7;
+	const up = s => /^\p{Lu}/u.test(s.replace(/^[^\p{L}]+/u, '')) && !/^I('|$)/.test(s);
+	const low = s => /^\p{Ll}/u.test(s.replace(/^[^\p{L}]+/u, ''));
+	// sentences sung elsewhere in the song: a move that makes a line just like one of them is likely right
+	const keys = new Set(main.map(o => lineWords(o.ln).map(w => w.w).join(' ')));
+	const known = ws => ws.length >= 3 && keys.has(ws.map(w => w.w).join(' '));
+	const out = [];
+	for (let n = 0; n + 1 < main.length; n++) {
+		const A = main[n], B = main[n + 1], a = lineWords(A.ln), b = lineWords(B.ln);
+		if (/[.!?…]["“”']?$/.test(a[a.length - 1].text)) continue;          // the sentence before ends properly
+		const aEnd = a[a.length - 1].end != null ? a[a.length - 1].end : a[a.length - 1].t;
+		// the last word of A starts the next sentence
+		if (a.length >= 3) {
+			const L = a[a.length - 1], P = a[a.length - 2];
+			const pe = P.end != null ? P.end : P.t;
+			const before = L.t != null && pe != null ? L.t - pe : null, after = L.t != null && b[0].t != null ? b[0].t - (L.end != null ? L.end : L.t) : null;
+			const capEv = capStyle && up(L.text), lowB = capStyle && low(b[0].text);
+			const timeEv = before != null && after != null && before >= 0.4 && before >= 2 * Math.max(0.05, after);
+			const simEv = known([L, ...b]) || (known(a.slice(0, -1)) && !known(a));
+			let pct = capEv && lowB && timeEv ? 92 : capEv && timeEv ? 80 : capEv && lowB ? 70 : timeEv && before >= 0.8 ? 60 : 0;
+			if (simEv) pct = Math.min(97, Math.max(pct, 65) + 20);
+			if (pct) out.push({li: A.li, dir: 1, word: L.text, pct, why: [capEv && 'groß geschrieben', lowB && 'die nächste Zeile beginnt klein',
+				timeEv && 'eine Pause davor (' + before.toFixed(1) + ' s), dicht an der nächsten Zeile',
+				simEv && 'danach sind die Zeilen wie andere Sätze im Song'].filter(Boolean).join(', ')});
+		}
+		// the first word of B ends the sentence before
+		if (b.length >= 3) {
+			const F = b[0], N = b[1];
+			const fe = F.end != null ? F.end : F.t;
+			const gapIn = F.t != null && aEnd != null ? F.t - aEnd : null, gapOut = N.t != null && fe != null ? N.t - fe : null;
+			const lowEv = capStyle && low(F.text);
+			const timeEv = gapIn != null && gapOut != null && gapOut >= 0.4 && gapOut >= 2 * Math.max(0.05, gapIn);
+			const simEv = known([...a, F]) || (known(b.slice(1)) && !known(b));
+			let pct = lowEv && timeEv ? 90 : lowEv ? 65 : timeEv && gapOut >= 0.8 ? 60 : 0;
+			if (simEv) pct = Math.min(97, Math.max(pct, 65) + 20);
+			if (pct && !out.some(o => o.li === A.li && o.dir === 1 && o.pct >= pct)) out.push({li: B.li, dir: -1, word: F.text, pct,
+				why: [lowEv && 'klein geschrieben', timeEv && 'dicht an der Zeile davor, danach eine Pause (' + gapOut.toFixed(1) + ' s)',
+					simEv && 'danach sind die Zeilen wie andere Sätze im Song'].filter(Boolean).join(', ')});
+		}
+	}
+	return out.sort((x, y) => y.pct - x.pct || x.li - y.li);
+}
+
+// move a whole word (with its syllables) over the line break: dir +1 = last word of li to the start of the next main
+// line, -1 = first word of li to the end of the main line before. The two lines lose their links (their text changes).
+function shiftWord(li, dir) {
+	const nb = j => { do j += dir; while (doc.lines[j] && (doc.lines[j].brk || LRC.isBg(doc.lines[j]))); return j; };
+	const oi = nb(li), A = doc.lines[li], B = doc.lines[oi];
+	if (!A || !B) return;
+	pushUndo();
+	delete A.link;
+	delete B.link;
+	const w = lineWords(A), o = dir > 0 ? w[w.length - 1] : w[0];
+	const moved = A.tokens.splice(o.a, o.b - o.a + 1);
+	moved[0].glue = false;
+	const last = moved[moved.length - 1];
+	if (dir > 0) {
+		const pv = A.tokens[A.tokens.length - 1];
+		if (pv && pv.end == null && moved[0].t != null) pv.end = moved[0].t;      // the line now ends where the word began
+		const nx = B.tokens[0];
+		if (last.end != null && nx && nx.t != null && last.end >= nx.t - 0.3) last.end = null;   // no pause before the next word
+		B.tokens.unshift(...moved);
+		if (moved[0].t != null) B.t = moved[0].t;
+	} else {
+		const pv = B.tokens[B.tokens.length - 1];
+		if (pv && pv.end != null && moved[0].t != null && moved[0].t - pv.end < 0.3) pv.end = null;   // no pause before it
+		const nx = A.tokens[0];
+		if (last.end == null) last.end = nx && nx.t != null ? nx.t : last.t != null ? LRC.q(last.t + 0.4) : null;   // it ends the line now
+		B.tokens.push(...moved);
+		if (A.tokens.length && A.tokens[0].t != null) A.t = A.tokens[0].t;
+	}
+	if (!A.tokens.length) doc.lines.splice(li, 1);
+	sel = {li: Math.min(li, oi), ti: 0, end: false};
+	changed();
+	hint('„' + moved.map(k => k.text).join('') + '“ ' + (dir > 0 ? 'an den Anfang der nächsten Zeile' : 'ans Ende der Zeile davor') + ' geschoben  (Strg+Z = zurück)');
+}
+
+function simRender() {
+	const box = $('simList'), pc = x => Math.round(x * 100) + ' %';
+	const txt = li => esc(LRC.lineText(doc.lines[li], false).replace(/\|/g, ''));
+	const sims = similarLines(), bi = buildIssues();
+	const h = [];
+	h.push('<h4>Satzbau <span class="dim">(' + (bi.length || 'nichts gefunden') + ')</span></h4>');
+	for (const o of bi) {
+		if (o.kind === 'split') {
+			const ln = doc.lines[o.li], a = ln.tokens.slice(0, o.ti), b = ln.tokens.slice(o.ti), s = x => esc(x.map((k, i) => (i && !k.glue ? ' ' : '') + k.text).join(''));
+			h.push('<div class="simrow"><span class="pct' + (o.pct >= 80 ? ' hi' : '') + '">' + o.pct + ' %</span><div class="simtx">' +
+				'Zeile ' + (o.li + 1) + ': vor „<b>' + esc(o.word) + '</b>“ teilen<br><span class="dim">' + esc(o.why) + '</span><br><span class="dim">' +
+				s(a) + ' │ ' + s(b) + '</span></div><button data-sim="hear" data-li="' + o.li + '">▶</button><button data-sim="split" data-li="' + o.li +
+				'" data-ti="' + o.ti + '">✂ teilen</button></div>');
+			continue;
+		}
+		const oi = o.dir > 0 ? o.li + 1 : o.li - 1;
+		h.push('<div class="simrow"><span class="pct' + (o.pct >= 80 ? ' hi' : '') + '">' + o.pct + ' %</span><div class="simtx">' +
+			'Zeile ' + (o.li + 1) + ': „<b>' + esc(o.word) + '</b>“ gehört wahrscheinlich ' + (o.dir > 0 ? 'an den Anfang der nächsten Zeile' : 'ans Ende der Zeile davor') +
+			'<br><span class="dim">' + esc(o.why) + '</span><br><span class="dim">' + (o.dir > 0 ? txt(o.li) + ' │ ' + txt(Math.min(doc.lines.length - 1, oi)) :
+				txt(Math.max(0, oi)) + ' │ ' + txt(o.li)) + '</span></div>' +
+			'<button data-sim="hear" data-li="' + o.li + '">▶</button><button data-sim="shift" data-li="' + o.li + '" data-dir="' + o.dir + '">' +
+			(o.dir > 0 ? '↓ rüberschieben' : '↑ rüberschieben') + '</button></div>');
+	}
+	h.push('<h4>Ähnliche Sätze <span class="dim">(' + (sims.length || 'keine') + ')</span></h4>');
+	if (sims.some(s => s.sim.text === 1)) h.push('<div class="row end"><button data-sim="all">🔗 Alle mit gleichem Text verlinken</button></div>');
+	for (const s of sims) {
+		const same = s.sim.text === 1;
+		h.push('<div class="simrow"><span class="pct' + (s.sim.score >= 0.9 ? ' hi' : '') + '">' + pc(s.sim.score) + '</span><div class="simtx">' +
+			'Zeile ' + (s.li + 1) + ' ≈ Zeile ' + (s.to + 1) + ' <span class="dim">· Text ' + pc(s.sim.text) +
+			(s.sim.rhythm != null ? ' · Timing ' + pc(s.sim.rhythm) : ' · Timing –') + '</span><br>' + txt(s.li) + (same ? '' : '<br><span class="dim">' + txt(s.to) +
+			' – beim Verlinken bekommt Zeile ' + (s.li + 1) + ' diesen Text</span>') + '</div>' +
+			'<button data-sim="hear" data-li="' + s.li + '">▶</button><button data-sim="hear" data-li="' + s.to + '">▶ ' + (s.to + 1) + '</button>' +
+			'<button data-sim="cmp" data-li="' + s.to + '" title="In der Wortliste nur diesen Satz und die ähnlichen zeigen">≈ vergleichen</button>' +
+			'<button data-sim="link" data-li="' + s.li + '" data-to="' + s.to + '">🔗 Verlinken</button></div>');
+	}
+	box.innerHTML = h.join('');
+}
+
+$('btnSim').onclick = () => {
+	if (edit) { lockedHint(); return; }
+	if (!doc.lines.length) { hint('Erst Lyrics laden.'); return; }
+	autoLinkUntimed();
+	simRender();
+	$('dlgSim').showModal();
+};
+$('simList').addEventListener('click', e => {
+	const b = e.target.closest('button[data-sim]');
+	if (!b) return;
+	const li = +b.dataset.li, act = b.dataset.sim;
+	if (act === 'hear') {
+		const r = lineRange(li);
+		if (r) asstHear(r.a - 0.2, r.b - r.a + 0.5);
+		return;
+	}
+	if (act === 'cmp') { $('dlgSim').close(); openCmp(li); return; }
+	if (act === 'split') splitAt(li, +b.dataset.ti);
+	else if (act === 'shift') shiftWord(li, +b.dataset.dir);
+	else if (act === 'link') linkLines([+b.dataset.to, li], false);
+	else if (act === 'all') {
+		const sims = similarLines().filter(s => s.sim.text === 1).sort((x, y) => x.li - y.li);
+		pushUndo();
+		const keep = undoStack.length;
+		for (const s of sims) {
+			const A = doc.lines[s.to], B = doc.lines[s.li];
+			if (A.link && B.link && A.link.id === B.link.id) continue;
+			linkLines([s.to, s.li], false);
+		}
+		undoStack.length = keep;                       // one step back undoes them all
+		hint(sims.length + ' Sätze verlinkt  (Strg+Z = zurück)');
+	}
+	simRender();
+});
+
+
+// ---------------------------------------------------------------- similar lines side by side, words dragged between lines
+// ≈ at a line number: only this line and the lines like it stay in the word list, one under the other, each with how
+// alike it is (%), to compare and link them. Esc or ✕ shows all lines again.
+
+// every line -> the lines like it [{li, sim}] (both ways), kept until the next change
+function simOf() {
+	const key = version + ':' + doc.lines.length + ':' + undoStack.length;
+	if (simMemo.key === key) return simMemo.map;
+	const map = new Map(), ws = doc.lines.map(ln => ln.brk ? [] : lineWords(ln));
+	doc.lines.forEach((A, i) => {
+		if (ws[i].length < 2) return;
+		for (let j = i + 1; j < doc.lines.length; j++) {
+			if (ws[j].length < 2) continue;
+			const s = lineSim(A, doc.lines[j]);
+			if (!s || s.text < 0.5 || s.score < SIM_MIN) continue;
+			if (!map.has(i)) map.set(i, []);
+			if (!map.has(j)) map.set(j, []);
+			map.get(i).push({li: j, sim: s});
+			map.get(j).push({li: i, sim: s});
+		}
+	});
+	simMemo = {key, map};
+	return map;
+}
+
+function openCmp(li) {
+	if (edit) { lockedHint(); return; }
+	if (!(simOf().get(li) || []).length) { hint('Zu Zeile ' + (li + 1) + ' gibt es keinen ähnlichen Satz.'); return; }
+	autoLinkUntimed();
+	cmp = {ln: doc.lines[li]};
+	renderWords();
+	$('words').scrollTop = 0;
+}
+
+function closeCmp() {
+	if (!cmp) return;
+	cmp = null;
+	renderWords();
+	scrollToSel();
+}
+
+// the compare view: which lines it shows {li, rows: [{li, sim}]}, null = none (any more)
+function cmpRows() {
+	if (!cmp) return null;
+	const li = doc.lines.indexOf(cmp.ln);
+	if (li < 0) { cmp = null; return null; }
+	const rows = (simOf().get(li) || []).slice().sort((a, b) => a.li - b.li);
+	return {li, rows};
+}
+
+function renderCmp() {
+	const bar = $('cmpBar'), c = cmpRows();
+	bar.hidden = !c;
+	document.body.classList.toggle('comparing', !!c);
+	if (!c) return;
+	const show = new Set([c.li, ...c.rows.map(r => r.li)]);
+	lineEls.forEach((el, i) => { if (el) el.classList.toggle('cmp-hide', !show.has(i)); });
+	const A = doc.lines[c.li], open = c.rows.filter(r => !(A.link && doc.lines[r.li].link && doc.lines[r.li].link.id === A.link.id));
+	bar.innerHTML = '<b>≈ Vergleich mit Zeile ' + (c.li + 1) + '</b> <span class="dim">„' + esc(LRC.lineText(A, false).replace(/\|/g, '')) + '“ – ' +
+		c.rows.length + (c.rows.length === 1 ? ' ähnlicher Satz' : ' ähnliche Sätze') + ', die anderen Zeilen sind ausgeblendet</span>' +
+		(open.length ? '<button data-cmp="all">🔗 Alle mit Zeile ' + (c.li + 1) + ' verlinken</button>' : '<span class="ok">✓ alle verlinkt</span>') +
+		'<button data-cmp="close">✕ Vergleich beenden (Esc)</button>';
+	for (const r of c.rows) {
+		const el = lineEls[r.li], ln = el && el.querySelector('.ln');
+		if (!ln) continue;
+		const same = A.link && doc.lines[r.li].link && doc.lines[r.li].link.id === A.link.id;
+		const pc = x => Math.round(x * 100) + ' %';
+		ln.insertAdjacentHTML('beforeend', '<div class="cmpp" title="Text ' + pc(r.sim.text) + (r.sim.rhythm != null ? ' · Timing ' + pc(r.sim.rhythm) : ' · Timing –') +
+			'">' + pc(r.sim.score) + (same ? ' 🔗' : ' <button data-cmp="link" data-li="' + r.li + '" title="Mit Zeile ' + (c.li + 1) +
+			' verlinken – sie ist die Vorlage">🔗</button>') + '</div>');
+	}
+	const el = lineEls[c.li], ln = el && el.querySelector('.ln');
+	if (ln) ln.insertAdjacentHTML('beforeend', '<div class="cmpp anchor" title="Vorlage für den Vergleich">Vorlage</div>');
+}
+
+$('cmpBar').addEventListener('click', e => {
+	const b = e.target.closest('button[data-cmp]');
+	if (!b) return;
+	const c = cmpRows();
+	if (!c) return;
+	if (b.dataset.cmp === 'close') closeCmp();
+	else if (b.dataset.cmp === 'all') linkLines([c.li, ...c.rows.map(r => r.li)], false);
+});
+$('words').addEventListener('click', e => {
+	const b = e.target.closest('button[data-cmp="link"]');
+	if (!b) return;
+	e.stopPropagation();
+	const c = cmpRows();
+	if (c) linkLines([c.li, +b.dataset.li], false);
+}, true);
+
+// a line like another one but without word times: linked to it at once, its words laid out from its start to the right
+// (the line time, else just after the line before). Done when the comparison opens.
+function autoLinkUntimed() {
+	const map = simOf(), done = [];
+	doc.lines.forEach((ln, li) => {
+		if (ln.brk || ln.link || ln.tokens.some(k => k.t != null)) return;
+		const best = (map.get(li) || []).filter(r => lineKey(doc.lines[r.li]) === lineKey(ln) && doc.lines[r.li].tokens.filter(k => k.t != null).length >= 2)
+			.sort((a, b) => b.sim.text - a.sim.text || Math.abs(a.li - li) - Math.abs(b.li - li))[0];
+		if (!best) return;
+		if (ln.t == null) {
+			let p = li - 1;
+			while (p >= 0 && !lineRange(p)) p--;
+			const r = p >= 0 ? lineRange(p) : null;
+			if (!r) return;
+			ln.t = LRC.q(r.b + 0.1);
+		}
+		done.push([best.li, li]);
+	});
+	if (!done.length) return;
+	pushUndo();
+	const keep = undoStack.length;
+	for (const [m, li] of done) linkLines([m, li], false);
+	undoStack.length = keep;
+	hint(done.length + (done.length === 1 ? ' Satz ohne Zeiten wurde' : ' Sätze ohne Zeiten wurden') + ' mit einem gleichen verlinkt und ab ' +
+		'ihrem Start aufgefächert  (Strg+Z = zurück)');
+}
+
+// a word dragged in the word list onto another place - also into another line: it goes in there with its time
+// (and its syllables). Before a word / after it (by the half it is dropped on), or at the end of a line.
+let wdrag = null;
+$('words').addEventListener('mousedown', e => {
+	const tok = e.target.closest('.tok');
+	if (e.button !== 0 || !tok || e.target.closest('b, button, i') || edit || e.shiftKey || e.ctrlKey || e.metaKey || simple) return;
+	wdrag = {li: +tok.dataset.li, ti: +tok.dataset.ti, x0: e.clientX, y0: e.clientY, el: tok, on: false, drop: null};
+	const move = ev => {
+		if (!wdrag.on) {
+			if (Math.hypot(ev.clientX - wdrag.x0, ev.clientY - wdrag.y0) < 6) return;
+			wdrag.on = true;
+			wdrag.ghost = document.createElement('div');
+			wdrag.ghost.className = 'wghost';
+			const ln = doc.lines[wdrag.li], w = lineWords(ln).find(o => wdrag.ti >= o.a && wdrag.ti <= o.b);
+			if (w) wdrag.ti = w.a;
+			wdrag.ghost.textContent = w ? w.text : ln.tokens[wdrag.ti].text;
+			document.body.appendChild(wdrag.ghost);
+			for (let i = w ? w.a : wdrag.ti; i <= (w ? w.b : wdrag.ti); i++) { const t = tokEls[wdrag.li] && tokEls[wdrag.li][i]; if (t) t.classList.add('wdragging'); }
+			document.body.classList.add('wdrag');
+		}
+		ev.preventDefault();
+		wdrag.ghost.style.left = ev.clientX + 12 + 'px';
+		wdrag.ghost.style.top = ev.clientY + 8 + 'px';
+		$('words').querySelectorAll('.drop-b, .drop-a, .drop-end').forEach(x => x.classList.remove('drop-b', 'drop-a', 'drop-end'));
+		const under = document.elementFromPoint(ev.clientX, ev.clientY);
+		const t = under && under.closest('#words .tok'), row = under && under.closest('#words .line');
+		wdrag.drop = null;
+		if (t && !t.classList.contains('wdragging')) {
+			const r = t.getBoundingClientRect(), after = ev.clientX > r.left + r.width / 2;
+			t.classList.add(after ? 'drop-a' : 'drop-b');
+			wdrag.drop = {li: +t.dataset.li, ti: +t.dataset.ti, after};
+		} else if (row && !t && !doc.lines[+row.dataset.li].brk) {
+			row.classList.add('drop-end');
+			wdrag.drop = {li: +row.dataset.li, ti: null};
+		}
+	};
+	const up = () => {
+		window.removeEventListener('mousemove', move);
+		window.removeEventListener('mouseup', up);
+		const d = wdrag;
+		wdrag = null;
+		if (!d.on) return;
+		d.ghost.remove();
+		document.body.classList.remove('wdrag');
+		$('words').querySelectorAll('.drop-b, .drop-a, .drop-end, .wdragging').forEach(x => x.classList.remove('drop-b', 'drop-a', 'drop-end', 'wdragging'));
+		skipClick = true;
+		setTimeout(() => { skipClick = false; }, 0);
+		if (!d.drop) return;
+		const dl = doc.lines[d.drop.li];
+		let at = d.drop.ti == null ? dl.tokens.length : d.drop.ti;
+		if (d.drop.ti != null && d.drop.after) { at++; while (dl.tokens[at] && dl.tokens[at].glue) at++; }
+		moveWordTo(d.li, d.ti, d.drop.li, at);
+	};
+	window.addEventListener('mousemove', move);
+	window.addEventListener('mouseup', up);
+});
+let skipClick = false;
+$('words').addEventListener('click', e => { if (skipClick) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+// the word (with its syllables) at line li, token ti, moved in front of token `at` of line dl (at = its length: the end)
+function moveWordTo(li, ti, dl, at) {
+	const A = doc.lines[li], B = doc.lines[dl];
+	if (!A || !B) return;
+	let a = ti, b = ti;
+	while (a > 0 && A.tokens[a].glue) a--;
+	while (b + 1 < A.tokens.length && A.tokens[b + 1].glue) b++;
+	if (li === dl && at >= a && at <= b + 1) return;          // dropped on itself
+	while (B.tokens[at] && B.tokens[at].glue) at++;            // never into the middle of a word
+	pushUndo();
+	delete A.link;
+	delete B.link;
+	const wasLast = b === A.tokens.length - 1;
+	const moved = A.tokens.splice(a, b - a + 1);
+	if (li === dl && at > a) at -= moved.length;
+	if (A.tokens[a] && A.tokens[a].glue) A.tokens[a].glue = false;
+	const last = moved[moved.length - 1], first = moved[0];
+	first.glue = false;
+	if (wasLast && li !== dl) {                                  // the line before loses its last word: it ends where that one began
+		const pv = A.tokens[A.tokens.length - 1];
+		if (pv && pv.end == null) pv.end = first.t != null ? first.t : last.end;
+	}
+	const pv = B.tokens[at - 1], nx = B.tokens[at];
+	if (pv && pv.end != null && first.t != null && first.t - pv.end < 0.3) pv.end = null;     // no pause before it
+	if (nx && last.end != null && nx.t != null && last.end >= nx.t - 0.3) last.end = null;       // nor after it
+	if (!nx && last.end == null && pv && pv.end != null && first.t != null && pv.end > first.t) { last.end = pv.end; pv.end = null; }
+	B.tokens.splice(at, 0, ...moved);
+	let gone = false;
+	if (!A.tokens.length) { doc.lines.splice(li, 1); gone = true; }
+	const nl = gone && dl > li ? dl - 1 : dl;
+	sel = {li: nl, ti: doc.lines[nl].tokens.indexOf(first), end: false};
+	changed();
+	hint('„' + moved.map(k => k.text).join('') + '“ nach Zeile ' + (nl + 1) + ' geschoben' + (gone ? ' (die leere Zeile ist weg)' : '') + '  (Strg+Z = zurück)');
+}
+
+// a line split in two in front of token s (syllables stay with their word)
+function splitAt(li, s) {
+	const ln = doc.lines[li], tk = ln && ln.tokens;
+	if (!tk || s <= 0 || s >= tk.length) return;
+	while (s < tk.length && tk[s].glue) s++;
+	if (s >= tk.length) return;
+	pushUndo();
+	delete ln.link;
+	const left = tk[s - 1], nx = tk[s];
+	if (left.end == null && nx.t != null) left.end = nx.t;
+	const tail = tk.splice(s);
+	tail[0].glue = false;
+	doc.lines.splice(li + 1, 0, {t: tail[0].t, tokens: tail, brk: false, vtag: ln.vtag});
+	sel = {li: li + 1, ti: 0, end: false};
+	changed();
+	hint('Zeile ' + (li + 1) + ' geteilt: „' + LRC.lineText(ln, false).replace(/\|/g, '') + '“ | „' +
+		LRC.lineText(doc.lines[li + 1], false).replace(/\|/g, '') + '“  (Strg+Z = zurück)');
+}
+
+// with the original lyrics loaded: where the lines should break, from them -> issues as in buildIssues
+function refBuildIssues() {
+	if (!refLines) return [];
+	const dw = [];
+	doc.lines.forEach((ln, li) => { if (!ln.brk && !LRC.isBg(ln)) lineWords(ln).forEach((o, wi) => { if (o.w) dw.push({li, wi, w: o.w}); }); });
+	const rw = [];
+	refLines.forEach((s, ri) => s.split(/\s+/).forEach(x => { const w = wnorm(x); if (w) rw.push({ri, w}); }));
+	const n = dw.length, m = rw.length;
+	if (!n || !m || n * m > 6e6) return [];
+	const W = m + 1, d = new Uint16Array((n + 1) * W);
+	for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+		d[i * W + j] = dw[i].w === rw[j].w ? d[(i + 1) * W + j + 1] + 1 : Math.max(d[(i + 1) * W + j], d[i * W + j + 1]);
+	for (let i = 0, j = 0; i < n && j < m;) {
+		if (dw[i].w === rw[j].w) { dw[i].ri = rw[j].ri; i++; j++; } else if (d[(i + 1) * W + j] >= d[i * W + j + 1]) i++; else j++;
+	}
+	const byLine = new Map();
+	for (const o of dw) { if (!byLine.has(o.li)) byLine.set(o.li, []); byLine.get(o.li).push(o); }
+	const lis = [...byLine.keys()], out = [];
+	const major = ws => { const c = new Map(); ws.forEach(o => { if (o.ri != null) c.set(o.ri, (c.get(o.ri) || 0) + 1); }); return [...c].sort((a, b) => b[1] - a[1])[0]; };
+	lis.forEach((li, n) => {
+		const ws = byLine.get(li), mj = major(ws);
+		if (!mj) return;
+		const words = lineWords(doc.lines[li]);
+		// runs of words from the same original line: two runs of 2 words or more -> split there
+		const runs = [];
+		ws.forEach(o => { if (o.ri == null) return; const r = runs[runs.length - 1]; if (r && r.ri === o.ri) r.n++; else runs.push({ri: o.ri, n: 1, wi: o.wi}); });
+		const big = runs.filter(r => r.n >= 2);
+		if (big.length >= 2) {
+			for (let k = 1; k < big.length; k++) if (big[k].ri !== big[k - 1].ri)
+				out.push({li, kind: 'split', ti: words[big[k].wi].a, word: words[big[k].wi].text, pct: 95, why: 'laut Original-Lyrics beginnt hier eine neue Zeile'});
+			return;
+		}
+		const nx = byLine.get(lis[n + 1]), pv = byLine.get(lis[n - 1]);
+		const L = ws[ws.length - 1], F = ws[0];
+		if (ws.length >= 2 && nx && L.ri != null && L.ri !== mj[0] && nx[0].ri === L.ri && L.wi === words.length - 1)
+			out.push({li, dir: 1, word: words[L.wi].text, pct: 95, why: 'laut Original-Lyrics gehört es in die nächste Zeile'});
+		if (ws.length >= 2 && pv && F.ri != null && F.ri !== mj[0] && pv[pv.length - 1].ri === F.ri && F.wi === 0)
+			out.push({li, dir: -1, word: words[0].text, pct: 95, why: 'laut Original-Lyrics gehört es in die Zeile davor'});
+	});
+	return out;
+}
+
+// the same sentence twice in one line (two lines run together): split where it starts again
+function repeatIssues() {
+	const out = [];
+	doc.lines.forEach((ln, li) => {
+		if (ln.brk) return;
+		const w = lineWords(ln);
+		for (let k = 3; k + 3 <= w.length; k++) {
+			let m = 0;
+			while (k + m < w.length && m < k && w[m].w === w[k + m].w) m++;
+			if (m >= 3 && (m >= k - 1 || k + m === w.length)) {
+				out.push({li, kind: 'split', ti: w[k].a, word: w[k].text, pct: 85, why: 'der Satz fängt hier noch einmal von vorn an – zwei Zeilen in einer?'});
+				return;
+			}
+		}
+	});
+	return out;
+}
+
+
 // ---------------------------------------------------------------- choose, copy and paste lines
 // Lines are chosen with Shift / Strg+Klick (line number, word or line box), Strg+A or ☑ Auswählen. Strg+C / ⧉ Kopieren
 // copies them with all their times (as LRC text too, for other programs), Strg+V / 📋 Einfügen puts them in again so
@@ -3167,6 +3711,19 @@ document.addEventListener('paste', e => {
 	pasteLines(e.clipboardData.getData('text/plain'));
 });
 $('btnPick').onclick = () => setPickMode(!pickMode);
+
+// ⤒ the word list folded up over the lyrics display and the timeline: it gets (almost) the whole screen
+function setTall(on, keep = true) {
+	document.body.classList.toggle('tall', on);
+	$('splitTl').title = on ? 'Nach unten ziehen oder Doppelklick: Zeitleiste wieder aufklappen' : 'Ziehen: Zeitleiste höher / flacher – ganz nach oben: Wortliste aufklappen · Doppelklick: Standardhöhe';
+	$('btnTall').textContent = on ? '⤓ Zuklappen' : '⤒ Aufklappen';
+	$('btnTall').title = on ? 'Liedtext-Anzeige und Zeitleiste wieder zeigen' :
+		'Wortliste nach oben aufklappen: sie bekommt fast den ganzen Bildschirm (Liedtext-Anzeige und Zeitleiste klappen weg)';
+	if (keep) try { localStorage.setItem('lrcEditorTall', on ? '1' : ''); } catch (e) { /* ignore */ }
+	scrollToSel();
+}
+$('btnTall').onclick = () => setTall(!document.body.classList.contains('tall'));
+try { setTall(localStorage.getItem('lrcEditorTall') === '1', false); } catch (e) { setTall(false, false); }
 $('btnCopy').onclick = () => {
 	const text = copyLines();
 	if (text != null && navigator.clipboard) navigator.clipboard.writeText(text).catch(() => { /* kept inside the studio */ });
@@ -4051,11 +4608,15 @@ function splitter(el, cur, set, axis) {
 	});
 }
 
-splitter($('splitTl'), () => LANE_Y + 42, setTlH, 'y');
+splitter($('splitTl'), () => document.body.classList.contains('tall') ? TL_H.min - 60 : LANE_Y + 42, h => {
+	const tall = h < TL_H.min - 40;
+	if (tall !== document.body.classList.contains('tall')) setTall(tall);
+	if (!tall) setTlH(h);
+}, 'y');
 splitter($('splitPv'), () => pvH, setPvH, 'y');
 $('splitPv').ondblclick = () => setPvH(PV_H.def);
 splitter($('splitSide'), () => document.querySelector('aside').getBoundingClientRect().width, setSideW, 'x');
-$('splitTl').ondblclick = () => setTlH(TL_H.def);
+$('splitTl').ondblclick = () => { if (document.body.classList.contains('tall')) setTall(false); else setTlH(TL_H.def); };
 $('splitSide').ondblclick = () => { document.querySelector('aside').style.width = ''; try { localStorage.removeItem('lrcEditorSideW'); } catch (e) { /* ignore */ } };
 try {
 	const h = +localStorage.getItem('lrcEditorTlH'), w = +localStorage.getItem('lrcEditorSideW');
@@ -4448,6 +5009,11 @@ const INTRO = ['move', 'tempo', 'add', 'del', 'word', 'undo'];                 /
 // timing job per line
 function asstTasks() {
 	const per = new Map(), add = (li, t) => { if (!per.has(li)) per.set(li, []); per.get(li).push(t); };
+	// the sentences first: as long as a line is cut in the wrong place (or two lines run together), only that - the
+	// timing comes after, so nothing is set twice
+	const build = buildIssues().filter(o => o.pct >= 70 && doc.lines[o.li] && !((asst.skip.get(doc.lines[o.li]) || new Set()).has('build')))
+		.sort((a, b) => a.li - b.li);
+	if (build.length) return build.map(o => Object.assign({}, o, {kind: 'build'}));
 	for (const d of dupPairs()) {                // the same word twice on top of itself first: fusing fixes text and timing
 		const sk = asst.skip.get(doc.lines[d.li]);
 		if (!(sk && sk.has('dup'))) add(d.li, {kind: 'dup', li: d.li, ti: d.ti});
@@ -4651,6 +5217,23 @@ function asstTaskStep(t) {
 				'Wird sie so gesungen, ist alles gut.', acts: [['skipref', 'Passt so', 1], hear], point: () => aBtn('skipref')};
 	}
 	const id = t.kind + ':' + li + ':' + LRC.lineText(ln, false), back = asst.later.has(ln) ? 'Jetzt die schwierige Stelle von vorhin. ' : '';
+	if (t.kind === 'build') {
+		const nb = d => { let j = li; do j += d; while (doc.lines[j] && (doc.lines[j].brk || LRC.isBg(doc.lines[j]))); return j; };
+		const oi = t.dir == null ? -1 : nb(t.dir), w = lineWords(ln);
+		const wi = t.dir > 0 ? w[w.length - 1] : t.dir < 0 ? w[0] : w.find(o => o.a === t.ti);
+		const wti = wi ? wi.a : 0;
+		if (t.dir == null) return {...base, key: id + ':split:' + t.ti, ti: t.ti, codes: ['build'], title: 'Zwei Sätze in einer Zeile?',
+			html: 'Erst der Satzbau, dann das Timing. ' + z + ' sieht aus wie zwei Zeilen in einer: ' + esc(t.why) + '. <b>✂ Teilen</b> macht ' +
+				'vor „<b>' + esc(t.word) + '</b>“ eine neue Zeile daraus (die Zeiten bleiben). Gehört es doch zusammen, klick <b>Passt so</b>.',
+			acts: [['split', '✂ Teilen', 1], ['skip', 'Passt so'], hear], point: () => aShown(aTok(li, t.ti)) || aBtn('split')};
+		return {...base, key: id + ':shift:' + t.dir, ti: wti, dir: t.dir, codes: ['build'], focus: new Set([li, oi].filter(x => doc.lines[x])),
+			title: 'Wort in der falschen Zeile?',
+			html: 'Erst der Satzbau, dann das Timing. ' + z + ': „<b>' + esc(t.word) + '</b>“ gehört wahrscheinlich ' +
+				(t.dir > 0 ? 'an den Anfang der nächsten Zeile' : 'ans Ende der Zeile davor') + ' (' + t.pct + ' %) – ' + esc(t.why) + '. ' +
+				'<b>Rüberschieben</b> setzt es mit seiner Zeit dorthin. Du kannst Wörter auch selbst mit der Maus in eine andere Zeile ziehen.',
+			acts: [['shiftw', t.dir > 0 ? '↓ Rüberschieben' : '↑ Rüberschieben', 1], ['skip', 'Passt so'], hear],
+			point: () => aShown(aTok(li, wti)) || aBtn('shiftw')};
+	}
 	if (t.kind === 'dup') return {...base, key: id + ':' + t.ti, ti: t.ti, codes: ['dup'], title: 'Doppeltes Wort?',
 		html: z + ': „<b>' + esc(aWord(li, t.ti)) + '</b>“ steht zweimal fast genau übereinander – wahrscheinlich wurde es nur einmal gesungen ' +
 			'und ist aus Versehen doppelt drin. <b>⇊ Fusionieren</b> macht eins daraus: Das obere wird gelöscht, das untere bleibt mit seiner Zeit. ' +
@@ -4920,6 +5503,8 @@ $('asstActs').addEventListener('click', e => {
 	else if (a === 'sort') sortLines();
 	else if (a === 'resort') sortWords(s.li);
 	else if (a === 'fuse') fuseWords([{li: s.li, ti: s.ti}]);
+	else if (a === 'split') splitAt(s.li, s.ti);
+	else if (a === 'shiftw') shiftWord(s.li, s.dir);
 	else if (a === 'trim') trimEnd(s.li, s.ti, s.to);
 	else if (a === 'retap') { if (s.range) asstRetapRange(s.li, s.range.a, s.range.b); else asstRetap(s.li); }
 	else if (a === 'retapcur') { asst.listening = false; pause(); asstRetap(sel ? sel.li : playLi); }
@@ -4978,6 +5563,7 @@ let sylBefore = null, followBefore = null;
 function setSimple(on, keep = true) {
 	simple = on;
 	document.body.classList.toggle('simple', on && !tut);
+	if (on) setTall(false, false);                 // the assistant points into the timeline
 	$('btnSimple').textContent = on ? '🛠 Profi-Modus' : '✨ Simple-Modus';
 	$('btnSimple').title = on ? 'Zurück ins volle Studio mit allen Werkzeugen' :
 		'Simple-Modus: ein schlankes Studio, Juicy führt dich Stelle für Stelle durch den Song';
