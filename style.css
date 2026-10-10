@@ -1072,15 +1072,16 @@ body.wdrag, body.wdrag * { cursor: grabbing !important; user-select: none; }
 /* a box drawn in the word list */
 .lband { position: fixed; z-index: 94; pointer-events: none; border: 1px dashed var(--cursor); background: color-mix(in srgb, var(--cursor) 12%, transparent); }
 
-/* small buttons on a sentence, as on a word: + front / back = a sentence before / after, × = delete it (on hover) */
+/* small buttons on a sentence, as on a word: + front / back = a sentence before / after, × = delete it (on hover).
+   × and the back + sit in the middle of the right edge, clear of the word list's scrollbar */
 .line > .lpre, .line > .lpost, .line > .lx {
 	position: absolute; display: grid; place-items: center; width: 17px; height: 17px; min-width: 0; padding: 0; border-radius: 50%;
 	font: bold 12px/1 var(--font); cursor: pointer; z-index: 3; visibility: hidden;
 }
 .line > .lpre, .line > .lpost { top: 50%; transform: translateY(-50%); background: var(--ok); color: var(--ink); border: none; }
 .line > .lpre { left: -7px; }
-.line > .lpost { right: 14px; }
-.line > .lx { top: -5px; right: -5px; background: var(--panel-solid); color: var(--dim); border: 1px solid var(--line-hi); }
+.line > .lpost { right: 42px; }
+.line > .lx { top: 50%; right: 12px; width: 22px; height: 22px; font-size: 14px; transform: translateY(-50%); background: var(--panel-solid); color: var(--dim); border: 1px solid var(--line-hi); }
 .line:hover > .lpre, .line:hover > .lpost, .line:hover > .lx { visibility: visible; }
 .line > .lpre:hover, .line > .lpost:hover { filter: brightness(1.2); }
 .line > .lx:hover { background: var(--err); color: var(--ink); border-color: transparent; }
